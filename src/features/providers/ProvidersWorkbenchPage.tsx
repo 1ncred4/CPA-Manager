@@ -16,8 +16,6 @@ import { ProviderCategoryList } from './components/ProviderCategoryList';
 import { ProviderResourcePanel } from './components/ProviderResourcePanel';
 import type { ProviderPanelControls } from './components/ProviderResourcePanel';
 import { ProviderSheet, type ProviderSheetHandle } from './sheets/ProviderSheet';
-import { isMultiProtocolSponsorBrand } from './sponsorDefinitions';
-import { isSponsorPartialMutationError } from './sponsorMutationRecovery';
 import { useProviderWorkbench } from './useProviderWorkbench';
 import {
   getProviderFilterState,
@@ -75,17 +73,13 @@ const getResourceRecentSuccess = (
   resource: ProviderResource,
   usageByProvider: ProviderRecentUsageMap
 ): number => {
-  if (isMultiProtocolSponsorBrand(resource.brand)) {
-    return 0;
-  }
   if (resource.brand === 'openaiCompatibility') {
     return getOpenAIProviderRecentWindowStats(resource.raw as OpenAIProviderConfig, usageByProvider)
       .success;
   }
-  const usageProvider = resource.brand === 'claudeApi' ? 'claude' : resource.brand;
   return getProviderRecentWindowStats(
     usageByProvider,
-    usageProvider,
+    resource.brand,
     resource.apiKey ?? undefined,
     resource.baseUrl ?? undefined
   ).success;
@@ -303,10 +297,6 @@ export function ProvidersWorkbenchPage() {
             await workbench.deleteProvider(resource);
             showNotification(t('providersPage.toast.deleted'), 'success');
           } catch (err) {
-            if (isSponsorPartialMutationError(err)) {
-              showNotification(t('providersPage.sponsor.partialMutationWarning'), 'warning');
-              return;
-            }
             const msg = err instanceof Error ? err.message : String(err);
             showNotification(`${t('notification.delete_failed')}: ${msg}`, 'error');
           }
@@ -325,10 +315,6 @@ export function ProvidersWorkbenchPage() {
           'success'
         );
       } catch (err) {
-        if (isSponsorPartialMutationError(err)) {
-          showNotification(t('providersPage.sponsor.partialMutationWarning'), 'warning');
-          return;
-        }
         const msg = err instanceof Error ? err.message : String(err);
         showNotification(`${t('providersPage.toast.toggleFailed')}: ${msg}`, 'error');
       }

@@ -28,7 +28,6 @@ import { ConnectivityStatusIcon } from './ConnectivityStatusIcon';
 import { ApiKeyEntriesEditor } from './ApiKeyEntriesEditor';
 import { ModelEntriesEditor } from './ModelEntriesEditor';
 import styles from './sharedForm.module.scss';
-import { CLAUDE_API_BASE_URL } from '../../claudeApi';
 
 interface BaseProviderFormProps {
   brand: ProviderBrand;
@@ -56,9 +55,6 @@ const formatJsonObject = (value?: Record<string, unknown>): string => {
   return JSON.stringify(value, null, 2);
 };
 
-const isClaudeLikeBrand = (brand: ProviderBrand): boolean =>
-  brand === 'claude' || brand === 'claudeApi';
-
 function buildInitialForm(
   brand: ProviderBrand,
   resource: ProviderResource | null,
@@ -68,8 +64,7 @@ function buildInitialForm(
     return {
       apiKey: '',
       name: '',
-      baseUrl:
-        brand === 'claudeApi' ? CLAUDE_API_BASE_URL : brand === 'xai' ? XAI_API_BASE_URL : '',
+      baseUrl: brand === 'xai' ? XAI_API_BASE_URL : '',
       proxyUrl: '',
       prefix: '',
       disabled: false,
@@ -79,15 +74,16 @@ function buildInitialForm(
       headers: [emptyHeader()],
       excludedModelsText: '',
       websockets: brand === 'codex' || brand === 'xai' ? false : undefined,
-      cloak: isClaudeLikeBrand(brand)
-        ? { mode: '', strictMode: false, sensitiveWordsText: '', cacheUserId: false }
-        : undefined,
-      experimentalCchSigning: isClaudeLikeBrand(brand) ? false : undefined,
+      cloak:
+        brand === 'claude'
+          ? { mode: '', strictMode: false, sensitiveWordsText: '', cacheUserId: false }
+          : undefined,
+      experimentalCchSigning: brand === 'claude' ? false : undefined,
       testModel:
         brand === 'openaiCompatibility' ||
         brand === 'codex' ||
         brand === 'xai' ||
-        isClaudeLikeBrand(brand) ||
+        brand === 'claude' ||
         brand === 'gemini'
           ? ''
           : undefined,
@@ -165,7 +161,7 @@ function buildInitialForm(
       brand === 'codex' || brand === 'xai'
         ? (cfg as ProviderKeyConfig).websockets === true
         : undefined,
-    cloak: isClaudeLikeBrand(brand)
+    cloak: brand === 'claude'
       ? {
           mode: (cfg as ProviderKeyConfig).cloak?.mode ?? '',
           strictMode: (cfg as ProviderKeyConfig).cloak?.strictMode === true,
@@ -173,11 +169,11 @@ function buildInitialForm(
           cacheUserId: (cfg as ProviderKeyConfig).cloak?.cacheUserId === true,
         }
       : undefined,
-    experimentalCchSigning: isClaudeLikeBrand(brand)
+    experimentalCchSigning: brand === 'claude'
       ? (cfg as ProviderKeyConfig).experimentalCchSigning === true
       : undefined,
     testModel:
-      brand === 'codex' || brand === 'xai' || isClaudeLikeBrand(brand) || brand === 'gemini'
+      brand === 'codex' || brand === 'xai' || brand === 'claude' || brand === 'gemini'
         ? ''
         : undefined,
   };
@@ -413,7 +409,7 @@ export function BaseProviderForm({
     brand === 'gemini' ||
     brand === 'codex' ||
     brand === 'xai' ||
-    isClaudeLikeBrand(brand) ||
+    brand === 'claude' ||
     brand === 'openaiCompatibility';
   const supportsOpenAIModelOptions = brand === 'openaiCompatibility';
   const singleConnectivity =
@@ -421,7 +417,7 @@ export function BaseProviderForm({
       ? { status: connectivity.codexStatus, run: connectivity.runCodex }
       : brand === 'gemini'
         ? { status: connectivity.geminiStatus, run: connectivity.runGemini }
-        : isClaudeLikeBrand(brand)
+        : brand === 'claude'
           ? { status: connectivity.claudeStatus, run: connectivity.runClaude }
           : null;
 
@@ -584,7 +580,7 @@ export function BaseProviderForm({
               {t('providersPage.form.testModel')}
               {brand === 'codex' ||
               brand === 'xai' ||
-              isClaudeLikeBrand(brand) ||
+              brand === 'claude' ||
               brand === 'gemini' ? (
                 <span className={styles.labelHint}>
                   {' '}
