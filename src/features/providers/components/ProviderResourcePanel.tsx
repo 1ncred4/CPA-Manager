@@ -3,7 +3,6 @@ import { IconExternalLink, IconPlus, IconSearch } from '@/components/ui/icons';
 import type { ProviderRecentUsageMap } from '@/components/providers/utils';
 import { PROVIDER_LOGOS } from '../brandLogos';
 import { CLAUDE_API_AFFILIATE_URL } from '../claudeApi';
-import { getKimiAffiliateUrl } from '../kimi';
 import { APIKEY_FUN_AFFILIATE_URL, APIKEY_FUN_DASHBOARD_URL } from '../sponsor';
 import { getSponsorProviderDefinition } from '../sponsorDefinitions';
 import type { ProviderGroup, ProviderResource } from '../types';
@@ -53,7 +52,7 @@ export function ProviderResourcePanel({
   onToggleDisabled,
   onCreate,
 }: ProviderResourcePanelProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const logo = PROVIDER_LOGOS[group.id];
   const providerTitle = t(`providersPage.providerNames.${group.id}`);
   const hasProviderInfo = group.resources.length > 0;
@@ -63,14 +62,10 @@ export function ProviderResourcePanel({
   const registrationUrl =
     group.id === 'claudeApi'
       ? CLAUDE_API_AFFILIATE_URL
-      : group.id === 'kimi'
-        ? getKimiAffiliateUrl(i18n.resolvedLanguage ?? i18n.language)
       : group.id === 'code0' || group.id === 'fennoAI' || group.id === 'qiniuCloud'
         ? getSponsorProviderDefinition(group.id).affiliateUrl
         : null;
-  const registrationLabel = t(
-    group.id === 'kimi' ? 'providersPage.sponsor.registerNow' : 'providersPage.sponsor.registerLink'
-  );
+  const registrationLabel = t('providersPage.sponsor.registerLink');
   const emptyText = showSponsorRegistrationLink
     ? t('providersPage.sponsor.emptyRegisterHint')
     : t('providersPage.table.empty');

@@ -97,7 +97,6 @@
   },
   "nav": {
     "dashboard": "儀表板",
-    "quick_start": "快速開始",
     "ai_providers": "AI 供應商",
     "auth_files": "驗證檔案",
     "oauth": "OAuth 登入",
@@ -117,7 +116,6 @@
   },
   "nav_meta": {
     "dashboard": "運行總覽",
-    "quick_start": "APIKEY.FUN 快速設定",
     "ai_providers": "上游模型路由",
     "auth_files": "Auth 檔案與憑證",
     "oauth": "OAuth 授權登入",
@@ -137,9 +135,6 @@
     "routing_strategy": "路由策略",
     "available_models": "可用模型",
     "available_models_desc": "所有供應商的模型總數",
-    "quick_start_card": "快速開始",
-    "quick_start_entry": "快速開始",
-    "quick_start_entry_desc": "進入快速開始頁面",
     "welcome_back": "歡迎回來",
     "greeting_morning": "早安",
     "greeting_afternoon": "午安",
@@ -1362,8 +1357,7 @@
       "apikeyFun": "APIKEY.FUN",
       "code0": "Code0",
       "fennoAI": "FennoAI",
-      "qiniuCloud": "七牛雲",
-      "kimi": "Kimi"
+      "qiniuCloud": "七牛雲"
     },
     "table": {
       "key": "金鑰",
@@ -1387,7 +1381,6 @@
       "protocolSummary": "Anthropic / OpenAI / Gemini / Codex API (Responses)",
       "detailHint": "{{provider}} 會按協議分別寫入對應的 API Key 設定,此處只做聚合管理。",
       "registerLink": "點此註冊",
-      "registerNow": "立即註冊",
       "dashboardLink": "控制面板",
       "emptyRegisterHint": "尚未新增設定",
       "apiKeyHint": "此金鑰只會寫入目前選擇的分組/協議設定。",
