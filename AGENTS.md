@@ -31,3 +31,18 @@ Git history follows Conventional Commit style, for example `feat: add support fo
 ## Architecture & Configuration Notes
 
 This UI is not the proxy; it talks to the backend Management API under `/v0/management`. Treat backend contracts as the source of truth. For OAuth/provider changes, inspect `../CLIProxyAPI` before changing route names, provider keys, callback parameters, or auth-file semantics. Store no secrets in the repo; management keys are entered at runtime and persisted only in browser storage.
+
+## Release Automation
+
+- `.github/workflows/release.yml` publishes the single-file UI as Release asset **`management.html`** (exact name; case-insensitive match downstream, but never ship as `index.html`).
+- **Every push to `main`** rebuilds and updates the floating `latest` Release (force-moves the `latest` tag, then uploads/clobbers `management.html`).
+- **Tags matching `v*`** create versioned Releases with the same asset.
+- Local manual equivalent when CI is unavailable:
+  ```bash
+  bun install --frozen-lockfile
+  bun run build
+  cp dist/index.html dist/management.html
+  gh release upload latest dist/management.html --clobber
+  # or: gh release create vX.Y.Z dist/management.html --title "vX.Y.Z" --latest
+  ```
+- After landing product changes on `main`, do not hand-build a second copy unless CI failed; prefer the automated `latest` asset.

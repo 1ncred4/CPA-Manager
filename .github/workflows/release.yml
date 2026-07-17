@@ -2,6 +2,8 @@ name: Build and Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -29,13 +31,31 @@ jobs:
         with:
           bun-version: '1.3.14'
 
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          short_sha="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "is_tag=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_tag=false" >> "$GITHUB_OUTPUT"
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+            echo "name=Latest (${short_sha})" >> "$GITHUB_OUTPUT"
+            echo "version=latest-${short_sha}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       - name: Build all-in-one HTML
         run: bun run build
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ steps.meta.outputs.version }}
 
       - name: Prepare release assets
         run: |
@@ -46,23 +66,66 @@ jobs:
       - name: Generate release notes
         run: |
           set -euo pipefail
-          current_tag="${GITHUB_REF_NAME}"
-          previous_tag="$(git tag --list 'v*' --sort=-v:refname | grep -v "^${current_tag}$" | head -n 1 || true)"
-          if [ -n "${previous_tag}" ]; then
-            range="${previous_tag}..${current_tag}"
+          short_sha="${{ steps.meta.outputs.short_sha }}"
+          if [ "${{ steps.meta.outputs.is_tag }}" = "true" ]; then
+            current_tag="${GITHUB_REF_NAME}"
+            previous_tag="$(git tag --list 'v*' --sort=-v:refname | grep -v "^${current_tag}$" | head -n 1 || true)"
+            if [ -n "${previous_tag}" ]; then
+              range="${previous_tag}..${current_tag}"
+            else
+              range="${current_tag}"
+            fi
+            {
+              echo "### Changes"
+              echo
+              git log --pretty=format:"- %h %s" "${range}"
+              echo
+            } > release-notes.md
           else
-            range="${current_tag}"
+            {
+              echo "Continuous build from \`main\`."
+              echo
+              echo "- Commit: \`${GITHUB_SHA}\` (\`${short_sha}\`)"
+              echo "- Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              echo
+              echo "Download asset: \`management.html\`"
+            } > release-notes.md
           fi
 
-          : > release-notes.md
-          git log --pretty=format:"- %h %s" "${range}" >> release-notes.md
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: Publish versioned release
+        if: steps.meta.outputs.is_tag == 'true'
+        uses: softprops/action-gh-release@v2
         with:
           files: dist/management.html
           body_path: release-notes.md
           draft: false
           prerelease: false
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish or update latest release
+        if: steps.meta.outputs.is_tag != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.meta.outputs.tag }}"
+          name="${{ steps.meta.outputs.name }}"
+
+          # Point the floating tag at the commit that produced this build.
+          git tag -f "${tag}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${tag}" --force
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release edit "${tag}" \
+              --title "${name}" \
+              --notes-file release-notes.md \
+              --latest
+            gh release upload "${tag}" dist/management.html --clobber
+          else
+            gh release create "${tag}" dist/management.html \
+              --title "${name}" \
+              --notes-file release-notes.md \
+              --latest
+          fi
