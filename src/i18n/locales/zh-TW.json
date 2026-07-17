@@ -1349,7 +1349,6 @@
     },
     "categories": {
       "title": "提供商",
-      "quickFill": "快速填入",
       "activeCount": "{{active}}/{{total}} 活躍"
     },
     "providerNames": {
