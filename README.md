@@ -116,10 +116,10 @@ The UI language is automatically detected from browser settings and can be manua
 ## Build & release notes
 
 - Vite produces a **single HTML** output (`dist/index.html`) with all assets inlined (via `vite-plugin-singlefile`).
-- Every push to `main` triggers `.github/workflows/release.yml` to rebuild and publish/update the floating **`latest`** Release asset `management.html` (exact filename required).
-- Tagging `vX.Y.Z` also triggers the same workflow and publishes a versioned Release with `management.html`.
-- Direct download of the always-current build: `https://github.com/1ncred4/CPA-Manager/releases/latest/download/management.html`
-- The UI version shown on the System page is injected at build time (env `VERSION`, git tag / `latest-<sha>`, or `package.json` fallback).
+- Every push to `main` triggers `.github/workflows/release.yml` to rebuild and publish a new sequential Release `vMAJOR.MINOR.PATCH` with asset `management.html` (exact filename required). Patch is auto-bumped from the highest existing `v*.*.*` tag (e.g. `v1.0.0` → `v1.0.1`).
+- Manual control: run the workflow via **Actions → Build and Release → Run workflow** and choose `patch` / `minor` / `major`, or push a tag `vX.Y.Z` for an explicit version.
+- Always-current download (GitHub “latest” release pointer): `https://github.com/1ncred4/CPA-Manager/releases/latest/download/management.html`
+- The UI version shown on the System page is injected at build time (env `VERSION`, release tag, or `package.json` fallback).
 
 ## Security notes
 

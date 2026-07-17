@@ -116,10 +116,10 @@ bun run build
 ## 构建与发布说明
 
 - 使用 Vite 输出 **单文件 HTML**（`dist/index.html`），资源全部内联（`vite-plugin-singlefile`）。
-- 每次 push 到 `main` 都会触发 `.github/workflows/release.yml`，重新构建并更新浮动 **`latest`** Release 中的资产 `management.html`（文件名必须精确为 `management.html`）。
-- 打 `vX.Y.Z` 标签同样触发该 workflow，发布带版本号的 Release（资产同样是 `management.html`）。
-- 始终可下载当前构建：`https://github.com/1ncred4/CPA-Manager/releases/latest/download/management.html`
-- 系统信息页显示的 UI 版本在构建期注入（优先环境变量 `VERSION`，否则 git tag / `latest-<sha>` / `package.json`）。
+- 每次 push 到 `main` 都会触发 `.github/workflows/release.yml`，自动在最高 `v*.*.*` 标签上递增 **patch** 并发布新版本（如 `v1.0.0` → `v1.0.1`），资产文件名固定为 `management.html`。
+- 需要升 minor/major 时：在 **Actions → Build and Release → Run workflow** 里选择 `minor` / `major`，或手动推送标签 `vX.Y.Z`。
+- 始终可下载当前构建（GitHub 的 latest 指针）：`https://github.com/1ncred4/CPA-Manager/releases/latest/download/management.html`
+- 系统信息页显示的 UI 版本在构建期注入（优先环境变量 `VERSION`，否则 release tag / `package.json`）。
 
 ## 安全提示
 

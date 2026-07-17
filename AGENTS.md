@@ -35,14 +35,15 @@ This UI is not the proxy; it talks to the backend Management API under `/v0/mana
 ## Release Automation
 
 - `.github/workflows/release.yml` publishes the single-file UI as Release asset **`management.html`** (exact name; case-insensitive match downstream, but never ship as `index.html`).
-- **Every push to `main`** rebuilds and updates the floating `latest` Release (force-moves the `latest` tag, then uploads/clobbers `management.html`).
-- **Tags matching `v*`** create versioned Releases with the same asset.
+- **Every push to `main`** auto-bumps the patch of the highest existing `vMAJOR.MINOR.PATCH` tag and creates a new Release (e.g. `v1.0.0` → `v1.0.1` → `v1.0.2`), marked as GitHub “latest”.
+- **Manual bump**: `workflow_dispatch` with `patch` / `minor` / `major`, or push an explicit tag `vX.Y.Z` (skipped if that release already exists, to avoid double-publish when main already created it).
+- Download always-current build: `https://github.com/1ncred4/CPA-Manager/releases/latest/download/management.html`
 - Local manual equivalent when CI is unavailable:
   ```bash
   bun install --frozen-lockfile
   bun run build
   cp dist/index.html dist/management.html
-  gh release upload latest dist/management.html --clobber
-  # or: gh release create vX.Y.Z dist/management.html --title "vX.Y.Z" --latest
+  # next free patch after highest v*.*.* tag, e.g.:
+  gh release create v1.0.1 dist/management.html --title "v1.0.1" --latest
   ```
-- After landing product changes on `main`, do not hand-build a second copy unless CI failed; prefer the automated `latest` asset.
+- After landing product changes on `main`, do not hand-build a second copy unless CI failed.
