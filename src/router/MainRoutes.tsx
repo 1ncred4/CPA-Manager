@@ -1,10 +1,10 @@
 import { Navigate, useRoutes, type Location } from 'react-router-dom';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { ProvidersWorkbenchPage } from '@/features/providers/ProvidersWorkbenchPage';
-import { AuthFilesPage } from '@/pages/AuthFilesPage';
-import { AuthFilesOAuthExcludedEditPage } from '@/pages/AuthFilesOAuthExcludedEditPage';
-import { AuthFilesOAuthModelAliasEditPage } from '@/pages/AuthFilesOAuthModelAliasEditPage';
-import { OAuthPage } from '@/pages/OAuthPage';
+import { ModelsPage } from '@/features/models/ModelsPage';
+import { ModelExcludedEditPage } from '@/features/models/ModelExcludedEditPage';
+import { ModelAliasEditPage } from '@/features/models/ModelAliasEditPage';
+import { ApiKeyModelsEditPage } from '@/features/models/ApiKeyModelsEditPage';
 import { QuotaPage } from '@/pages/QuotaPage';
 import { PluginResourcePage } from '@/features/plugins/PluginResourcePage';
 import { PluginsPage } from '@/features/plugins/PluginsPage';
@@ -23,10 +23,21 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/quick-start/*', element: <Navigate to="/ai-providers" replace /> },
   { path: '/ai-providers', element: <ProvidersWorkbenchPage /> },
   { path: '/ai-providers/*', element: <Navigate to="/ai-providers" replace /> },
-  { path: '/auth-files', element: <AuthFilesPage /> },
-  { path: '/auth-files/oauth-excluded', element: <AuthFilesOAuthExcludedEditPage /> },
-  { path: '/auth-files/oauth-model-alias', element: <AuthFilesOAuthModelAliasEditPage /> },
-  { path: '/oauth', element: <OAuthPage /> },
+  // Legacy redirects: auth-files / oauth → ai-providers or models
+  { path: '/auth-files', element: <Navigate to="/ai-providers" replace /> },
+  { path: '/auth-files/oauth-excluded', element: <Navigate to="/models?tab=disabled" replace /> },
+  {
+    path: '/auth-files/oauth-model-alias',
+    element: <Navigate to="/models?tab=mapping" replace />,
+  },
+  { path: '/auth-files/*', element: <Navigate to="/ai-providers" replace /> },
+  { path: '/oauth', element: <Navigate to="/ai-providers" replace /> },
+  { path: '/oauth/*', element: <Navigate to="/ai-providers" replace /> },
+  // Models management
+  { path: '/models', element: <ModelsPage /> },
+  { path: '/models/excluded', element: <ModelExcludedEditPage /> },
+  { path: '/models/mapping', element: <ModelAliasEditPage /> },
+  { path: '/models/api-key', element: <ApiKeyModelsEditPage /> },
   { path: '/quota', element: <QuotaPage /> },
   ...(supportsPlugin
     ? [

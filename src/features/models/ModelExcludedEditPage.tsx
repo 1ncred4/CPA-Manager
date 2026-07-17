@@ -28,13 +28,13 @@ import {
 } from '@/features/authFiles/oauthExcludedRules';
 import type { AuthFileItem, OAuthModelAliasEntry } from '@/types';
 import { getErrorMessage } from '@/utils/helpers';
-import styles from './AuthFilesOAuthExcludedEditPage.module.scss';
+import styles from './ModelExcludedEdit.module.scss';
 
 type AuthFileModelItem = { id: string; display_name?: string; type?: string; owned_by?: string };
 
-type LocationState = { fromAuthFiles?: boolean } | null;
+type LocationState = { fromModels?: boolean } | null;
 
-export function AuthFilesOAuthExcludedEditPage() {
+export function ModelExcludedEditPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -138,11 +138,11 @@ export function AuthFilesOAuthExcludedEditPage() {
 
   const handleBack = useCallback(() => {
     const state = location.state as LocationState;
-    if (state?.fromAuthFiles) {
+    if (state?.fromModels) {
       navigate(-1);
       return;
     }
-    navigate('/auth-files', { replace: true });
+    navigate('/models?tab=disabled', { replace: true });
   }, [location.state, navigate]);
 
   const swipeRef = useEdgeSwipeBack({ onBack: handleBack });

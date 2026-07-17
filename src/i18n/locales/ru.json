@@ -105,7 +105,8 @@
     "plugin_store": "Магазин плагинов",
     "config_management": "Панель конфигурации",
     "logs": "Просмотр логов",
-    "system_info": "Информация системы"
+    "system_info": "Информация системы",
+    "models": "Управление моделями"
   },
   "nav_groups": {
     "operate": "Работа",
@@ -123,7 +124,8 @@
     "plugin_store": "Поиск и установка плагинов",
     "logs": "Трассировка запросов",
     "config_management": "Базовая конфигурация шлюза",
-    "system_info": "Состояние и диагностика"
+    "system_info": "Состояние и диагностика",
+    "models": "Отключение и сопоставление моделей"
   },
   "dashboard": {
     "current_config": "Текущая конфигурация",
@@ -1248,7 +1250,10 @@
     "login_failed": "Вход не выполнен",
     "commercial_mode_restart_required": "Режим коммерческого использования изменён. Перезапустите сервис, чтобы применить изменения",
     "copy_failed": "Не удалось скопировать",
-    "link_copied": "Ссылка скопирована в буфер обмена"
+    "link_copied": "Ссылка скопирована в буфер обмена",
+    "save_failed": "Не удалось сохранить",
+    "load_failed": "Не удалось загрузить",
+    "copy_success": "Скопировано"
   },
   "language": {
     "switch": "Язык",
@@ -1400,7 +1405,10 @@
         "nameRequired": "Название обязательно",
         "apiKeyRequired": "Нужен хотя бы один API-ключ",
         "baseUrlRequired": "Base URL обязателен"
-      }
+      },
+      "modelsManagedHint": "{{count}} сопоставлений. Редактируйте в разделе управления моделями.",
+      "excludedManagedHint": "Правила исключения редактируются в управлении моделями. Отключение записи по-прежнему использует \"*\".",
+      "openModelsPage": "Открыть в управлении моделями"
     },
     "delete": {
       "title": "Удалить ресурс",
@@ -1464,6 +1472,40 @@
     },
     "modelCatalog": {
       "notLoaded": "Не загружено"
+    },
+    "authGroups": {
+      "apiKey": "API Key",
+      "oauth": "OAuth"
+    },
+    "oauth": {
+      "addCredential": "Добавить учётные данные",
+      "filterPlaceholder": "Поиск учётных данных…",
+      "emptyTitle": "Нет учётных данных",
+      "emptyDescription": "Запустите OAuth или загрузите JSON-файл.",
+      "uploadOnlyHint": "Этот канал поддерживает только загрузку JSON-файлов.",
+      "loginDescription": "Запустите OAuth или вставьте callback URL после авторизации.",
+      "startLogin": "Начать вход"
     }
+  },
+  "modelsPage": {
+    "title": "Управление моделями",
+    "subtitle": "Единое управление отключением и сопоставлением моделей всех провайдеров.",
+    "tabs": {
+      "disabled": "Отключённые модели",
+      "mapping": "Сопоставление"
+    },
+    "apiKeyExcludedTitle": "API Key · исключённые модели",
+    "apiKeyMappingTitle": "API Key · сопоставление моделей",
+    "noApiKeyResources": "Нет записей API Key",
+    "excludedCount": "Правил исключения: {{count}}",
+    "mappingCount": "Моделей: {{count}}",
+    "clearExcludedTitle": "Очистить исключения",
+    "clearExcludedConfirm": "Удалить все правила исключения для «{{name}}»? (Флаг отключения записи сохранится.)",
+    "saved": "Сохранено",
+    "editExcludedTitle": "Редактировать исключения",
+    "editMappingTitle": "Редактировать сопоставление",
+    "resourceNotFound": "Запись провайдера не найдена",
+    "mappingEditorLabel": "Сопоставление (по строке: name или name=alias)",
+    "excludedEditorLabel": "Исключённые модели (по строке, поддерживаются шаблоны; отключение записи управляется у провайдера)"
   }
 }

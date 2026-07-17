@@ -13,7 +13,7 @@ import {
   supportsAuthFileUsingApi,
   supportsAuthFileWebsockets,
 } from '@/features/authFiles/constants';
-import styles from '@/pages/AuthFilesPage.module.scss';
+import styles from '@/features/authFiles/AuthFiles.module.scss';
 
 export type AuthFilesPrefixProxyEditorModalProps = {
   disableControls: boolean;

@@ -3,7 +3,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { OAuthConfigLoadError } from '@/features/authFiles/constants';
-import styles from '@/pages/AuthFilesPage.module.scss';
+import styles from '@/features/authFiles/AuthFiles.module.scss';
 
 export type OAuthExcludedCardProps = {
   disableControls: boolean;

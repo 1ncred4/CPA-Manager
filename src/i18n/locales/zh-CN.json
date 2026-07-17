@@ -105,7 +105,8 @@
     "plugin_store": "插件商店",
     "config_management": "配置面板",
     "logs": "日志查看",
-    "system_info": "中心信息"
+    "system_info": "中心信息",
+    "models": "模型管理"
   },
   "nav_groups": {
     "operate": "运行",
@@ -124,7 +125,8 @@
     "plugin_store": "发现并安装插件",
     "logs": "请求追踪与排查",
     "config_management": "网关基础配置",
-    "system_info": "运行与诊断信息"
+    "system_info": "运行与诊断信息",
+    "models": "禁用与映射模型"
   },
   "dashboard": {
     "current_config": "当前配置",
@@ -1270,7 +1272,10 @@
     "login_failed": "登录失败",
     "commercial_mode_restart_required": "商业模式开关已变更，请重启服务后生效",
     "copy_failed": "复制失败",
-    "link_copied": "已复制"
+    "link_copied": "已复制",
+    "save_failed": "保存失败",
+    "load_failed": "加载失败",
+    "copy_success": "已复制"
   },
   "language": {
     "switch": "语言",
@@ -1422,7 +1427,10 @@
         "nameRequired": "名称必填",
         "apiKeyRequired": "至少填写一个 API 密钥",
         "baseUrlRequired": "服务地址必填"
-      }
+      },
+      "modelsManagedHint": "当前 {{count}} 个模型映射。建议在模型管理中编辑。",
+      "excludedManagedHint": "排除模型规则在模型管理中维护；条目启停仍使用“*”。",
+      "openModelsPage": "在模型管理中打开"
     },
     "delete": {
       "title": "删除资源",
@@ -1486,6 +1494,40 @@
     },
     "modelCatalog": {
       "notLoaded": "未加载"
+    },
+    "authGroups": {
+      "apiKey": "API Key",
+      "oauth": "OAuth 凭证"
+    },
+    "oauth": {
+      "addCredential": "添加凭证",
+      "filterPlaceholder": "搜索凭证…",
+      "emptyTitle": "暂无凭证",
+      "emptyDescription": "发起 OAuth 登录或上传凭证 JSON 文件。",
+      "uploadOnlyHint": "该渠道仅支持上传凭证 JSON 文件。",
+      "loginDescription": "发起 OAuth 登录，或在授权后粘贴回调 URL。",
+      "startLogin": "开始登录"
     }
+  },
+  "modelsPage": {
+    "title": "模型管理",
+    "subtitle": "统一管理所有提供商的模型禁用规则与模型映射。",
+    "tabs": {
+      "disabled": "模型禁用",
+      "mapping": "模型映射"
+    },
+    "apiKeyExcludedTitle": "API Key 提供商 · 排除模型",
+    "apiKeyMappingTitle": "API Key 提供商 · 模型映射",
+    "noApiKeyResources": "暂无 API Key 提供商条目",
+    "excludedCount": "{{count}} 条排除规则",
+    "mappingCount": "{{count}} 个模型",
+    "clearExcludedTitle": "清空排除模型",
+    "clearExcludedConfirm": "清空「{{name}}」的所有排除规则？（整条目禁用标记会保留）",
+    "saved": "已保存",
+    "editExcludedTitle": "编辑排除模型",
+    "editMappingTitle": "编辑模型映射",
+    "resourceNotFound": "未找到该提供商条目",
+    "mappingEditorLabel": "模型映射（每行一个：name 或 name=alias）",
+    "excludedEditorLabel": "排除模型（每行一条，支持 * 通配；整条目禁用由提供商启停控制）"
   }
 }

@@ -2,6 +2,8 @@
  * AI 提供商 Workbench 视图模型(归一化各 brand 的异构 config)
  */
 
+export type AuthMethod = 'apiKey' | 'oauth';
+
 export type ProviderBrand =
   | 'gemini'
   | 'codex'
@@ -9,6 +11,30 @@ export type ProviderBrand =
   | 'claude'
   | 'vertex'
   | 'openaiCompatibility';
+
+/** OAuth / 凭证渠道（与 auth-file type / oauth provider key 对齐） */
+export type OAuthChannel = string;
+
+export type ProviderCategoryId =
+  | { method: 'apiKey'; brand: ProviderBrand }
+  | { method: 'oauth'; channel: OAuthChannel };
+
+export type ProviderCategoryKey = `apiKey:${ProviderBrand}` | `oauth:${string}`;
+
+export const toCategoryKey = (id: ProviderCategoryId): ProviderCategoryKey =>
+  id.method === 'apiKey' ? `apiKey:${id.brand}` : `oauth:${id.channel}`;
+
+export const parseCategoryKey = (key: string): ProviderCategoryId | null => {
+  if (key.startsWith('apiKey:')) {
+    return { method: 'apiKey', brand: key.slice('apiKey:'.length) as ProviderBrand };
+  }
+  if (key.startsWith('oauth:')) {
+    const channel = key.slice('oauth:'.length).trim();
+    if (!channel) return null;
+    return { method: 'oauth', channel };
+  }
+  return null;
+};
 
 export const PROVIDER_SORT_BY_VALUES = ['name', 'priority', 'recent-success'] as const;
 export type ProviderSortBy = (typeof PROVIDER_SORT_BY_VALUES)[number];

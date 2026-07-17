@@ -76,10 +76,10 @@ Check the CLI Proxy API server documentation/config comments for the full authen
 - **Dashboard**: connection status, server version/build date, quick counts, model availability snapshot.
 - **Config Panel**: visual editor for common `config.yaml` fields, basic settings, proxy `api-keys`, and source editing with YAML highlighting/search plus a save diff preview.
 - **AI Providers**:
-  - Gemini/Codex/Claude/Vertex key entries (base URL, headers, proxy, model aliases, excluded models, prefix).
-  - OpenAI-compatible providers (multiple API keys, custom headers, model alias import via `/v1/models`, optional browser-side "chat/completions" test).
-- **Auth Files**: upload/download/delete JSON credentials, filter/search/pagination, runtime-only indicators, view supported models per credential (when the server supports it), manage OAuth excluded models (supports `*` wildcards), configure OAuth model alias mappings.
-- **OAuth**: start OAuth/device flows for Codex, Anthropic/Claude, Antigravity, Kimi, and xAI/Grok; poll status; submit callback URLs or xAI/Grok displayed codes; import Vertex JSON credentials and iFlow cookies.
+  - Grouped by auth method: `API Key` and `OAuth credentials`.
+  - API Key: Gemini/Codex/Claude/Vertex/xAI/OpenAI-compatible entries (base URL, headers, proxy, prefix, connectivity test, model discovery).
+  - OAuth credentials: manage auth files per channel (upload/download/enable/disable/delete/field edit), start OAuth login, submit callback URLs / xAI codes, import Vertex JSON.
+- **Model Management**: unified model disable rules and mappings for both OAuth channels and API Key entries; diagram mapping, wildcard exclusions, and per-entry editors.
 - **Quota Management**: manage quota limits and usage for Claude, Antigravity, Codex, Kimi, xAI/Grok, and other providers.
 - **Logs**: tail logs with incremental polling, auto-refresh, search, hide management traffic, clear logs; download request error log files.
 - **System**: quick links, update check, request logging toggle, local login data cleanup, and fetch `/v1/models` (grouped view). Requires at least one proxy API key to query models.

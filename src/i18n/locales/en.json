@@ -105,7 +105,8 @@
     "plugin_store": "Plugin Store",
     "config_management": "Config Panel",
     "logs": "Logs Viewer",
-    "system_info": "Management Center Info"
+    "system_info": "Management Center Info",
+    "models": "Model Management"
   },
   "nav_groups": {
     "operate": "Operate",
@@ -124,7 +125,8 @@
     "plugin_store": "Discover & install plugins",
     "logs": "Request tracing",
     "config_management": "Gateway configuration",
-    "system_info": "Runtime & diagnostics"
+    "system_info": "Runtime & diagnostics",
+    "models": "Disable & map models"
   },
   "dashboard": {
     "current_config": "Current Configuration",
@@ -1270,7 +1272,10 @@
     "login_failed": "Login failed",
     "commercial_mode_restart_required": "Commercial mode setting changed. Please restart the service for it to take effect",
     "copy_failed": "Copy failed",
-    "link_copied": "Link copied to clipboard"
+    "link_copied": "Link copied to clipboard",
+    "save_failed": "Save failed",
+    "load_failed": "Load failed",
+    "copy_success": "Copied"
   },
   "language": {
     "switch": "Language",
@@ -1422,7 +1427,10 @@
         "nameRequired": "Name is required",
         "apiKeyRequired": "At least one API key is required",
         "baseUrlRequired": "Base URL is required"
-      }
+      },
+      "modelsManagedHint": "{{count}} model mapping(s). Prefer editing in Model Management.",
+      "excludedManagedHint": "Excluded-model rules are managed in Model Management. Entry disable still uses \"*\".",
+      "openModelsPage": "Open in Model Management"
     },
     "delete": {
       "title": "Delete resource",
@@ -1486,6 +1494,40 @@
     },
     "modelCatalog": {
       "notLoaded": "Not loaded"
+    },
+    "authGroups": {
+      "apiKey": "API Key",
+      "oauth": "OAuth"
+    },
+    "oauth": {
+      "addCredential": "Add credential",
+      "filterPlaceholder": "Search credentials…",
+      "emptyTitle": "No credentials yet",
+      "emptyDescription": "Start OAuth login or upload a credential JSON file.",
+      "uploadOnlyHint": "This channel only supports uploading credential JSON files.",
+      "loginDescription": "Start OAuth login or paste the callback URL after authorization.",
+      "startLogin": "Start login"
     }
+  },
+  "modelsPage": {
+    "title": "Model Management",
+    "subtitle": "Manage model disable rules and mappings across all providers.",
+    "tabs": {
+      "disabled": "Disabled models",
+      "mapping": "Model mapping"
+    },
+    "apiKeyExcludedTitle": "API Key providers · excluded models",
+    "apiKeyMappingTitle": "API Key providers · model mapping",
+    "noApiKeyResources": "No API Key provider entries",
+    "excludedCount": "{{count}} exclusion rule(s)",
+    "mappingCount": "{{count}} model(s)",
+    "clearExcludedTitle": "Clear excluded models",
+    "clearExcludedConfirm": "Remove all excluded-model rules for \"{{name}}\"? (Entry disable flag is kept.)",
+    "saved": "Saved",
+    "editExcludedTitle": "Edit excluded models",
+    "editMappingTitle": "Edit model mapping",
+    "resourceNotFound": "Provider entry not found",
+    "mappingEditorLabel": "Model mapping (one per line: name or name=alias)",
+    "excludedEditorLabel": "Excluded models (one per line, wildcards supported; entry disable is controlled on the provider)"
   }
 }

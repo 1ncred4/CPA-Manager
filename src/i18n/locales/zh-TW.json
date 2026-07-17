@@ -105,7 +105,8 @@
     "plugin_store": "插件商店",
     "config_management": "設定面板",
     "logs": "記錄檢視",
-    "system_info": "中心資訊"
+    "system_info": "中心資訊",
+    "models": "模型管理"
   },
   "nav_groups": {
     "operate": "運行",
@@ -124,7 +125,8 @@
     "plugin_store": "探索並安裝插件",
     "logs": "請求追蹤與排查",
     "config_management": "閘道基礎設定",
-    "system_info": "運行與診斷資訊"
+    "system_info": "運行與診斷資訊",
+    "models": "停用與對應模型"
   },
   "dashboard": {
     "current_config": "目前設定",
@@ -1296,7 +1298,10 @@
     "login_failed": "登入失敗",
     "commercial_mode_restart_required": "商業模式開關已變更，請重啟服務後生效",
     "copy_failed": "複製失敗",
-    "link_copied": "已複製"
+    "link_copied": "已複製",
+    "save_failed": "儲存失敗",
+    "load_failed": "載入失敗",
+    "copy_success": "已複製"
   },
   "language": {
     "switch": "語言",
@@ -1448,7 +1453,10 @@
         "nameRequired": "名稱必填",
         "apiKeyRequired": "至少填寫一個 API 金鑰",
         "baseUrlRequired": "服務位址必填"
-      }
+      },
+      "modelsManagedHint": "目前 {{count}} 個模型對應。建議在模型管理中編輯。",
+      "excludedManagedHint": "排除模型規則於模型管理中維護；條目啟停仍使用「*」。",
+      "openModelsPage": "在模型管理中開啟"
     },
     "delete": {
       "title": "刪除資源",
@@ -1512,6 +1520,40 @@
     },
     "modelCatalog": {
       "notLoaded": "未載入"
+    },
+    "authGroups": {
+      "apiKey": "API Key",
+      "oauth": "OAuth 憑證"
+    },
+    "oauth": {
+      "addCredential": "新增憑證",
+      "filterPlaceholder": "搜尋憑證…",
+      "emptyTitle": "尚無憑證",
+      "emptyDescription": "發起 OAuth 登入或上傳憑證 JSON 檔案。",
+      "uploadOnlyHint": "此渠道僅支援上傳憑證 JSON 檔案。",
+      "loginDescription": "發起 OAuth 登入，或在授權後貼上回呼 URL。",
+      "startLogin": "開始登入"
     }
+  },
+  "modelsPage": {
+    "title": "模型管理",
+    "subtitle": "統一管理所有供應商的模型停用規則與模型對應。",
+    "tabs": {
+      "disabled": "模型停用",
+      "mapping": "模型對應"
+    },
+    "apiKeyExcludedTitle": "API Key 供應商 · 排除模型",
+    "apiKeyMappingTitle": "API Key 供應商 · 模型對應",
+    "noApiKeyResources": "尚無 API Key 供應商項目",
+    "excludedCount": "{{count}} 條排除規則",
+    "mappingCount": "{{count}} 個模型",
+    "clearExcludedTitle": "清空排除模型",
+    "clearExcludedConfirm": "清空「{{name}}」的所有排除規則？（整項目停用標記會保留）",
+    "saved": "已儲存",
+    "editExcludedTitle": "編輯排除模型",
+    "editMappingTitle": "編輯模型對應",
+    "resourceNotFound": "找不到該供應商項目",
+    "mappingEditorLabel": "模型對應（每行一個：name 或 name=alias）",
+    "excludedEditorLabel": "排除模型（每行一條，支援 * 萬用字元；整項目停用由供應商啟停控制）"
   }
 }

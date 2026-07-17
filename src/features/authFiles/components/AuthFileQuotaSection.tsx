@@ -24,7 +24,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { IconRefreshCw } from '@/components/ui/icons';
 import { QuotaProgressBar } from '@/features/authFiles/components/QuotaProgressBar';
-import styles from '@/pages/AuthFilesPage.module.scss';
+import styles from '@/features/authFiles/AuthFiles.module.scss';
 
 type QuotaState = { status?: string; error?: string; errorStatus?: number } | undefined;
 

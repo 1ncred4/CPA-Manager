@@ -15,11 +15,10 @@ import { PageTransition } from '@/components/common/PageTransition';
 import { MainRoutes } from '@/router/MainRoutes';
 import { pluginsApi } from '@/services/api';
 import {
-  IconSidebarAuthFiles,
   IconSidebarConfig,
   IconSidebarDashboard,
   IconSidebarLogs,
-  IconSidebarOauth,
+  IconModelCluster,
   IconSidebarPlugins,
   IconSidebarProviders,
   IconSidebarQuota,
@@ -49,8 +48,7 @@ import type { Theme } from '@/types';
 const sidebarIcons: Record<string, ReactNode> = {
   dashboard: <IconSidebarDashboard size={18} />,
   aiProviders: <IconSidebarProviders size={18} />,
-  authFiles: <IconSidebarAuthFiles size={18} />,
-  oauth: <IconSidebarOauth size={18} />,
+  models: <IconModelCluster size={18} />,
   quota: <IconSidebarQuota size={18} />,
   plugins: <IconSidebarPlugins size={18} />,
   pluginStore: <IconSidebarStore size={18} />,
@@ -533,16 +531,10 @@ export function MainLayout() {
           icon: sidebarIcons.aiProviders,
         },
         {
-          path: '/auth-files',
-          labelKey: 'nav.auth_files',
-          metaKey: 'nav_meta.auth_files',
-          icon: sidebarIcons.authFiles,
-        },
-        {
-          path: '/oauth',
-          labelKey: 'nav.oauth',
-          metaKey: 'nav_meta.oauth',
-          icon: sidebarIcons.oauth,
+          path: '/models',
+          labelKey: 'nav.models',
+          metaKey: 'nav_meta.models',
+          icon: sidebarIcons.models,
         },
       ],
     },
@@ -615,13 +607,14 @@ export function MainLayout() {
       pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
     const normalizedPath = trimmedPath === '/dashboard' ? '/' : trimmedPath;
 
-    const authFilesIndex = navOrder.indexOf('/auth-files');
-    if (authFilesIndex !== -1) {
-      if (normalizedPath === '/auth-files') return authFilesIndex;
-      if (normalizedPath.startsWith('/auth-files/')) {
-        if (normalizedPath.startsWith('/auth-files/oauth-excluded')) return authFilesIndex + 0.1;
-        if (normalizedPath.startsWith('/auth-files/oauth-model-alias')) return authFilesIndex + 0.2;
-        return authFilesIndex + 0.05;
+    const modelsIndex = navOrder.indexOf('/models');
+    if (modelsIndex !== -1) {
+      if (normalizedPath === '/models') return modelsIndex;
+      if (normalizedPath.startsWith('/models/')) {
+        if (normalizedPath.startsWith('/models/excluded')) return modelsIndex + 0.1;
+        if (normalizedPath.startsWith('/models/mapping')) return modelsIndex + 0.2;
+        if (normalizedPath.startsWith('/models/api-key')) return modelsIndex + 0.3;
+        return modelsIndex + 0.05;
       }
     }
 
@@ -642,9 +635,8 @@ export function MainLayout() {
 
     const from = normalize(fromPathname);
     const to = normalize(toPathname);
-    const isAuthFiles = (pathname: string) =>
-      pathname === '/auth-files' || pathname.startsWith('/auth-files/');
-    if (isAuthFiles(from) && isAuthFiles(to)) return 'ios';
+    const isModels = (pathname: string) => pathname === '/models' || pathname.startsWith('/models/');
+    if (isModels(from) && isModels(to)) return 'ios';
     return 'vertical';
   }, []);
 

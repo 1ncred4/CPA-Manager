@@ -23,11 +23,11 @@ import {
 } from '@/features/authFiles/oauthEditorState';
 import type { AuthFileItem, OAuthModelAliasEntry } from '@/types';
 import { generateId, getErrorMessage } from '@/utils/helpers';
-import styles from './AuthFilesOAuthModelAliasEditPage.module.scss';
+import styles from './ModelAliasEdit.module.scss';
 
 type AuthFileModelItem = { id: string; display_name?: string; type?: string; owned_by?: string };
 
-type LocationState = { fromAuthFiles?: boolean } | null;
+type LocationState = { fromModels?: boolean } | null;
 
 type OAuthModelMappingFormEntry = OAuthModelAliasEntry & { id: string };
 
@@ -53,7 +53,7 @@ const normalizeMappingEntries = (
   }));
 };
 
-export function AuthFilesOAuthModelAliasEditPage() {
+export function ModelAliasEditPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -149,11 +149,11 @@ export function AuthFilesOAuthModelAliasEditPage() {
 
   const handleBack = useCallback(() => {
     const state = location.state as LocationState;
-    if (state?.fromAuthFiles) {
+    if (state?.fromModels) {
       navigate(-1);
       return;
     }
-    navigate('/auth-files', { replace: true });
+    navigate('/models?tab=mapping', { replace: true });
   }, [location.state, navigate]);
 
   const swipeRef = useEdgeSwipeBack({ onBack: handleBack });

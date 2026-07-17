@@ -153,7 +153,7 @@ export function DashboardPage() {
       label: t('nav.auth_files'),
       value: authFilesCount ?? '-',
       icon: <IconFileText size={24} />,
-      path: '/auth-files',
+      path: '/ai-providers',
       loading: authFilesLoading && authFilesCount === null,
       sublabel: t('dashboard.oauth_credentials'),
     },
