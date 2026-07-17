@@ -103,7 +103,16 @@ export function PageTransition({
   useLayoutEffect(() => {
     if (isAnimating) return;
     if (location.key === currentLayerKey) return;
-    if (currentLayerPathname === location.pathname) return;
+    // Same pathname with only search/hash/state change: update the current layer in
+    // place so nested pages (e.g. /models?tab=...) can react without a page transition.
+    if (currentLayerPathname === location.pathname) {
+      setLayers((prev) =>
+        prev.map((layer) =>
+          layer.status === 'current' ? { ...layer, key: location.key, location } : layer
+        )
+      );
+      return;
+    }
     const scrollContainer = resolveScrollContainer();
     const exitScrollOffset = scrollContainer?.scrollTop ?? 0;
     exitScrollOffsetRef.current = exitScrollOffset;

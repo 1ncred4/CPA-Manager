@@ -169,6 +169,11 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     }
   }, [t]);
 
+  // Auto-load on mount so OAuth panels and dashboards don't stick on "loading".
+  useEffect(() => {
+    void loadFiles();
+  }, [loadFiles]);
+
   const handleUploadClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);

@@ -41,8 +41,17 @@ export function ModelsPage() {
   const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.status === 'current' : true;
 
   const tabParam = searchParams.get('tab');
-  const tab: ModelsTab = isModelsTab(tabParam) ? tabParam : 'disabled';
+  const [tab, setTabState] = useState<ModelsTab>(() =>
+    isModelsTab(tabParam) ? tabParam : 'disabled'
+  );
   const [viewMode, setViewMode] = useState<'diagram' | 'list'>('list');
+
+  // Keep local tab in sync when the URL is updated externally (redirects / deep links).
+  useEffect(() => {
+    if (isModelsTab(tabParam) && tabParam !== tab) {
+      setTabState(tabParam);
+    }
+  }, [tab, tabParam]);
 
   const authFiles = useAuthFilesData();
   const oauth = useAuthFilesOauth({ viewMode, files: authFiles.files });
@@ -50,25 +59,29 @@ export function ModelsPage() {
 
   const disableControls = connectionStatus !== 'connected';
 
+  const loadAuthFiles = authFiles.loadFiles;
+  const loadExcluded = oauth.loadExcluded;
+  const loadModelAlias = oauth.loadModelAlias;
+  const refetchProviders = workbench.refetch;
+
   const handleRefresh = useCallback(async () => {
     await Promise.allSettled([
-      authFiles.loadFiles(),
-      oauth.loadExcluded(),
-      oauth.loadModelAlias(),
-      workbench.refetch(),
+      loadAuthFiles(),
+      loadExcluded(),
+      loadModelAlias(),
+      refetchProviders(),
     ]);
-  }, [authFiles, oauth, workbench]);
+  }, [loadAuthFiles, loadExcluded, loadModelAlias, refetchProviders]);
 
   useHeaderRefresh(handleRefresh, isCurrentLayer);
 
-  const loadExcluded = oauth.loadExcluded;
-  const loadModelAlias = oauth.loadModelAlias;
   useEffect(() => {
     void loadExcluded();
     void loadModelAlias();
   }, [loadExcluded, loadModelAlias]);
 
   const setTab = (next: ModelsTab) => {
+    setTabState(next);
     const params = new URLSearchParams(searchParams);
     params.set('tab', next);
     setSearchParams(params, { replace: true });

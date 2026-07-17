@@ -153,13 +153,15 @@ export function ProvidersWorkbenchPage() {
     };
   }, []);
 
+  const loadAuthFiles = authFiles.loadFiles;
+  const refetchProviders = workbench.refetch;
   const handleRefresh = useCallback(async () => {
     await Promise.allSettled([
-      workbench.refetch(),
-      authFiles.loadFiles(),
+      refetchProviders(),
+      loadAuthFiles(),
       refreshRecentRequests().catch(() => undefined),
     ]);
-  }, [authFiles, refreshRecentRequests, workbench]);
+  }, [loadAuthFiles, refreshRecentRequests, refetchProviders]);
 
   useHeaderRefresh(handleRefresh, isCurrentLayer);
 
