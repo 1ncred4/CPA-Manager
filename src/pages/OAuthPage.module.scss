@@ -92,12 +92,6 @@
     background: #000;
   }
 
-  .featuredActions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: $spacing-sm;
-  }
-
   :global(.btn-primary) {
     border-color: #1783ff;
     background: #1783ff;
