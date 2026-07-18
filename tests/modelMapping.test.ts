@@ -612,6 +612,58 @@ describe('modelMapping', () => {
     });
   });
 
+  test('applyApiKeyModelAliasChanges allows one model to join multiple manual channels', () => {
+    // model a already in channel "chat"; also add it to "vision" without dropping chat
+    const models = [
+      { name: 'a', alias: 'chat' },
+      { name: 'b', alias: 'chat' },
+      { name: 'c' },
+    ];
+
+    const next = applyApiKeyModelAliasChanges({
+      models,
+      alias: 'vision',
+      nextModelIds: ['a', 'c'],
+    });
+
+    const aliasesForA = next.filter((m) => m.name === 'a').map((m) => m.alias).sort();
+    expect(aliasesForA).toEqual(['chat', 'vision']);
+    expect(next.find((m) => m.name === 'b')?.alias).toBe('chat');
+    expect(next.filter((m) => m.name === 'c' && m.alias === 'vision')).toHaveLength(1);
+
+    // Remove a from vision → chat binding remains, catalog keeps a
+    const afterRemove = applyApiKeyModelAliasChanges({
+      models: next,
+      alias: 'vision',
+      nextModelIds: ['c'],
+      previousModelIds: ['a', 'c'],
+    });
+    expect(afterRemove.filter((m) => m.name === 'a').map((m) => m.alias)).toEqual(['chat']);
+    expect(afterRemove.some((m) => m.name === 'a' && m.alias === 'vision')).toBe(false);
+    expect(afterRemove.some((m) => m.name === 'c' && m.alias === 'vision')).toBe(true);
+  });
+
+  test('buildFederatedMappingRows surfaces multi-channel api key bindings', () => {
+    const resource = makeResource({
+      raw: {
+        apiKey: 'sk-test',
+        models: [
+          { name: 'gpt-x', alias: 'chat' },
+          { name: 'gpt-x', alias: 'vision' },
+          { name: 'gpt-y' },
+        ],
+      },
+    });
+    const rows = buildFederatedMappingRows({
+      modelAlias: {},
+      resources: [resource],
+      providerLabels: { oauth: (c) => c, apiKey: () => 'Key' },
+    });
+    expect(rows.map((r) => r.aliasKey).sort()).toEqual(['chat', 'vision']);
+    expect(rows.find((r) => r.aliasKey === 'chat')?.targets[0].modelId).toBe('gpt-x');
+    expect(rows.find((r) => r.aliasKey === 'vision')?.targets[0].modelId).toBe('gpt-x');
+  });
+
   test('planAliasTargetAssignments groups by channel/resource', () => {
     const plan = planAliasTargetAssignments([
       { source: 'oauth', channel: 'Claude', modelId: 'a' },

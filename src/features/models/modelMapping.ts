@@ -487,10 +487,14 @@ export function applyOauthAliasTargetChanges(input: {
 }
 
 /**
- * 对 API Key models[] 应用 alias 增删。
- * - remove：清空匹配 alias+name 的 alias 字段
- * - add：给对应 name 设 alias
- * - 若 nextModelIds 中有当前列表不存在的模型，则追加条目（避免 silent no-op）
+ * 对 API Key models[] 应用「某一自定义渠道 alias」的增删。
+ *
+ * 同一模型可挂到多个手动渠道：用多条同名 models 条目表达
+ *   [{ name: "gpt-x", alias: "a" }, { name: "gpt-x", alias: "b" }]
+ * 编辑渠道 a 时不得覆盖/删除渠道 b 的条目。
+ *
+ * - 若 nextModelIds 含目录中不存在的模型，则追加条目
+ * - identity（alias===name）不会写入
  */
 export function applyApiKeyModelAliasChanges(input: {
   models: ModelAlias[];
@@ -504,65 +508,106 @@ export function applyApiKeyModelAliasChanges(input: {
   const aliasLiteral = input.alias.trim();
   const aliasKey = toAliasKey(aliasLiteral);
   const prevAliasKey = input.previousAliasKey ? toAliasKey(input.previousAliasKey) : aliasKey;
-  // Identity aliases (alias===name) cannot be persisted by the backend serializers.
+  void input.previousModelIds;
+
   const nextModelKeys = new Set(
     input.nextModelIds
       .map((id) => id.trim())
       .filter((id) => id && lower(id) !== aliasKey)
       .map(lower)
   );
-  const previousModelKeys = new Set((input.previousModelIds ?? []).map(lower).filter(Boolean));
 
-  const mapped = input.models.map((model) => {
+  const isEditedAliasKey = (key: string): boolean =>
+    Boolean(key) && (key === aliasKey || key === prevAliasKey);
+
+  const result: ModelAlias[] = [];
+  /** nameKey → 结果中是否已有至少一条（用于移除 alias 后保留目录） */
+  const namePresent = new Set<string>();
+  /** nameKey → 是否已有「当前 alias」条目 */
+  const holdsThisAlias = new Set<string>();
+  /** nameKey → 结果中可升级为当前 alias 的无 alias 条目下标 */
+  const bareIndexByName = new Map<string, number>();
+
+  const stripAlias = (model: ModelAlias): ModelAlias => {
+    const { alias: _drop, ...rest } = model as ModelAlias & { alias?: string };
+    void _drop;
+    const next: ModelAlias = { ...rest, name: model.name };
+    delete (next as { alias?: string }).alias;
+    return next;
+  };
+
+  input.models.forEach((model) => {
     const name = String(model.name ?? '').trim();
-    if (!name) return model;
+    if (!name) return;
     const nameKey = lower(name);
     const currentAlias = String(model.alias ?? '').trim();
     const currentAliasKey = currentAlias ? toAliasKey(currentAlias) : '';
 
-    const shouldHold = nextModelKeys.has(nameKey);
-    const heldOld =
-      previousModelKeys.has(nameKey) ||
-      (currentAliasKey && (currentAliasKey === aliasKey || currentAliasKey === prevAliasKey));
-
-    if (shouldHold) {
-      if (currentAlias === aliasLiteral) return model;
-      return { ...model, alias: aliasLiteral };
-    }
-
-    if (heldOld && currentAliasKey && (currentAliasKey === aliasKey || currentAliasKey === prevAliasKey)) {
-      const { alias: _drop, ...rest } = model as ModelAlias & { alias?: string };
-      void _drop;
-      const next: ModelAlias = { ...rest, name: model.name };
-      // explicitly clear alias
-      delete (next as { alias?: string }).alias;
-      return next;
-    }
-
-    // Strip residual identity aliases that serializers would drop anyway.
+    // 丢弃 identity 残留
     if (currentAliasKey && currentAliasKey === nameKey) {
-      const { alias: _drop, ...rest } = model as ModelAlias & { alias?: string };
-      void _drop;
-      const next: ModelAlias = { ...rest, name: model.name };
-      delete (next as { alias?: string }).alias;
-      return next;
+      if (!namePresent.has(nameKey)) {
+        result.push(stripAlias(model));
+        namePresent.add(nameKey);
+        bareIndexByName.set(nameKey, result.length - 1);
+      }
+      return;
     }
 
-    return model;
+    // 属于正在编辑的 alias：先拿掉，后面按 nextModelIds 再加回
+    if (isEditedAliasKey(currentAliasKey)) {
+      return;
+    }
+
+    // 其它有意义 alias：原样保留（多渠道）
+    if (currentAliasKey && isMeaningfulAlias(currentAlias, name)) {
+      result.push(model);
+      namePresent.add(nameKey);
+      bareIndexByName.delete(nameKey);
+      return;
+    }
+
+    // 无 alias 条目：保留，供后续升级
+    result.push(stripAlias(model));
+    namePresent.add(nameKey);
+    if (!bareIndexByName.has(nameKey)) {
+      bareIndexByName.set(nameKey, result.length - 1);
+    }
   });
 
-  const present = new Set(
-    mapped.map((model) => lower(String(model.name ?? '').trim())).filter(Boolean)
-  );
-  input.nextModelIds.forEach((modelId) => {
-    const id = modelId.trim();
-    if (!id || lower(id) === aliasKey) return;
-    if (present.has(lower(id))) return;
-    mapped.push({ name: id, alias: aliasLiteral });
-    present.add(lower(id));
+  // 为 nextModelIds 确保存在「name + 当前 alias」条目
+  nextModelKeys.forEach((nameKey) => {
+    if (holdsThisAlias.has(nameKey)) return;
+
+    const bareIdx = bareIndexByName.get(nameKey);
+    if (bareIdx !== undefined) {
+      const prev = result[bareIdx];
+      result[bareIdx] = { ...prev, alias: aliasLiteral };
+      bareIndexByName.delete(nameKey);
+      holdsThisAlias.add(nameKey);
+      namePresent.add(nameKey);
+      return;
+    }
+
+    // 已有其它 alias 的同名条目，或目录中尚无此模型：追加一条，不覆盖其它渠道
+    const originalName =
+      input.nextModelIds.map((id) => id.trim()).find((id) => lower(id) === nameKey) || nameKey;
+    result.push({ name: originalName, alias: aliasLiteral });
+    holdsThisAlias.add(nameKey);
+    namePresent.add(nameKey);
   });
 
-  return mapped;
+  // 被移出当前 alias、且结果中已无任何条目的模型：补回裸 name，避免从提供商模型列表消失
+  input.models.forEach((model) => {
+    const name = String(model.name ?? '').trim();
+    if (!name) return;
+    const nameKey = lower(name);
+    if (namePresent.has(nameKey)) return;
+    if (nextModelKeys.has(nameKey)) return;
+    result.push(stripAlias(model));
+    namePresent.add(nameKey);
+  });
+
+  return result;
 }
 
 /** 从 oauth definitions 构建 channel → modelIdLower → displayName */
