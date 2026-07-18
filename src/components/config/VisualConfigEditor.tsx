@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type ComponentType,
-  type CSSProperties,
   type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -268,8 +267,17 @@ export function VisualConfigEditor({
     const el = document.getElementById(configFieldDomId(targetFieldId));
     if (!el) {
       // Field not rendered right now (e.g. TLS cert while TLS is disabled) — fall back to
-      // bringing its section into view.
-      sectionRefs.current[sectionId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // bringing its section into view inside the sections scroller.
+      const scroller = sectionsScrollerRef.current;
+      const sectionEl = sectionRefs.current[sectionId];
+      if (scroller && sectionEl) {
+        const scrollerRect = scroller.getBoundingClientRect();
+        const sectionRect = sectionEl.getBoundingClientRect();
+        const nextTop = scroller.scrollTop + (sectionRect.top - scrollerRect.top) - 8;
+        scroller.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
+      } else {
+        sectionEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
       return;
     }
 
