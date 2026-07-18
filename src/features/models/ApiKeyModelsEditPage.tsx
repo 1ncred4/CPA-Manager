@@ -57,20 +57,30 @@ export function ApiKeyModelsEditPage() {
 
   useEffect(() => {
     if (!resource) return;
+    // Catalog editor shows unique model names only; aliases are owned by the Mapping page.
+    const uniqueNames = (list: ModelAlias[] | undefined): string => {
+      const seen = new Set<string>();
+      const names: string[] = [];
+      (list ?? []).forEach((m) => {
+        const name = String(m?.name ?? '').trim();
+        if (!name) return;
+        const key = name.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        names.push(name);
+      });
+      return names.join('\n');
+    };
     if (resource.brand === 'openaiCompatibility') {
       const cfg = resource.raw as OpenAIProviderConfig;
-      const models = (cfg.models ?? [])
-        .map((m) => (m.alias ? `${m.name}=${m.alias}` : m.name))
-        .join('\n');
+      const models = uniqueNames(cfg.models);
       setModelsText(models);
       setExcludedText('');
       setBaseline({ models, excluded: '' });
       return;
     }
     const cfg = resource.raw as GeminiKeyConfig | ProviderKeyConfig;
-    const models = (cfg.models ?? [])
-      .map((m) => (m.alias ? `${m.name}=${m.alias}` : m.name))
-      .join('\n');
+    const models = uniqueNames(cfg.models);
     const excluded = stripDisableAllModelsRule(cfg.excludedModels).join('\n');
     setModelsText(models);
     setExcludedText(excluded);
@@ -105,19 +115,71 @@ export function ApiKeyModelsEditPage() {
 
   const swipeRef = useEdgeSwipeBack({ onBack: handleBack });
 
-  const parseModels = (text: string): ModelAlias[] =>
+  /** Unique model names from the textarea (ignore legacy name=alias lines). */
+  const parseCatalogNames = (text: string): string[] => {
+    const seen = new Set<string>();
+    const names: string[] = [];
     text
       .split(/\n+/)
       .map((line) => line.trim())
       .filter(Boolean)
-      .map((line) => {
+      .forEach((line) => {
+        // Back-compat: if user pastes name=alias, only take the name side.
         const eq = line.indexOf('=');
-        if (eq === -1) return { name: line };
-        const name = line.slice(0, eq).trim();
-        const alias = line.slice(eq + 1).trim();
-        return alias ? { name, alias } : { name };
-      })
-      .filter((m) => m.name);
+        const name = (eq === -1 ? line : line.slice(0, eq)).trim();
+        if (!name) return;
+        const key = name.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        names.push(name);
+      });
+    return names;
+  };
+
+  /**
+   * Merge catalog names with existing multi-alias mappings so this page cannot
+   * clobber channels created on the Model Mapping page.
+   */
+  const mergeCatalogWithExistingAliases = (
+    catalogNames: string[],
+    existing: ModelAlias[] | undefined
+  ): ModelAlias[] => {
+    const lower = (v: string) => v.trim().toLowerCase();
+    const existingByName = new Map<string, ModelAlias[]>();
+    (existing ?? []).forEach((entry) => {
+      const name = String(entry?.name ?? '').trim();
+      if (!name) return;
+      const key = lower(name);
+      const list = existingByName.get(key) ?? [];
+      list.push(entry);
+      existingByName.set(key, list);
+    });
+
+    const result: ModelAlias[] = [];
+    catalogNames.forEach((name) => {
+      const key = lower(name);
+      const prevList = existingByName.get(key) ?? [];
+      const withAlias = prevList.filter((e) => {
+        const alias = String(e.alias ?? '').trim();
+        return alias && lower(alias) !== key;
+      });
+      if (withAlias.length) {
+        withAlias.forEach((prev) => {
+          result.push({ ...prev, name });
+        });
+        return;
+      }
+      const bare = prevList[0];
+      if (bare) {
+        const next: ModelAlias = { ...bare, name };
+        delete (next as { alias?: string }).alias;
+        result.push(next);
+      } else {
+        result.push({ name });
+      }
+    });
+    return result;
+  };
 
   const parseExcluded = (text: string): string[] =>
     text
@@ -129,12 +191,13 @@ export function ApiKeyModelsEditPage() {
     if (!resource) return;
     setSaving(true);
     try {
-      const models = parseModels(modelsText);
+      const catalogNames = parseCatalogNames(modelsText);
       if (resource.brand === 'openaiCompatibility') {
         const cfg = resource.raw as OpenAIProviderConfig;
         const selector = resource.selector;
         if (selector.brand !== 'openaiCompatibility') throw new Error('Invalid selector');
         const name = selector.name || cfg.name || '';
+        const models = mergeCatalogWithExistingAliases(catalogNames, cfg.models);
         await providersApi.updateOpenAIProvider(name, selector.index, {
           ...cfg,
           models,
@@ -148,6 +211,7 @@ export function ApiKeyModelsEditPage() {
           : excludedList.length
             ? excludedList
             : undefined;
+        const models = mergeCatalogWithExistingAliases(catalogNames, cfg.models);
         const next = { ...cfg, models, excludedModels };
         const selector = resource.selector;
         if (selector.brand === 'gemini') {
@@ -199,7 +263,7 @@ export function ApiKeyModelsEditPage() {
   const title =
     focus === 'excluded'
       ? t('modelsPage.editExcludedTitle', { defaultValue: '编辑排除模型' })
-      : t('modelsPage.editMappingTitle', { defaultValue: '编辑模型映射' });
+      : t('modelsPage.editCatalogTitle', { defaultValue: '编辑模型列表' });
 
   return (
     <SecondaryScreenShell
@@ -241,8 +305,13 @@ export function ApiKeyModelsEditPage() {
             <Card className={styles.settingsCard}>
               <div className={styles.settingsHeader}>
                 <div className={styles.settingsHeaderTitle}>
-                  {t('modelsPage.mappingEditorLabel', {
-                    defaultValue: '模型映射（每行一个：name 或 name=alias）',
+                  {t('modelsPage.catalogEditorLabel', {
+                    defaultValue: '模型列表（每行一个模型 ID；别名请在「模型映射」中管理）',
+                  })}
+                </div>
+                <div className={styles.settingsHeaderHint}>
+                  {t('modelsPage.catalogEditorHint', {
+                    defaultValue: '此处只维护去重后的模型目录，保存时会保留映射页写入的手动渠道别名。',
                   })}
                 </div>
               </div>
@@ -253,6 +322,7 @@ export function ApiKeyModelsEditPage() {
                 onChange={(e) => setModelsText(e.target.value)}
                 disabled={disableControls || saving}
                 style={{ width: '100%', fontFamily: 'var(--font-mono, monospace)' }}
+                spellCheck={false}
               />
             </Card>
           )}

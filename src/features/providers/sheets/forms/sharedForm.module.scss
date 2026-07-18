@@ -148,6 +148,13 @@
   font-weight: 400;
 }
 
+.sectionHintInline {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+
 .input,
 .textarea {
   width: 100%;
@@ -725,17 +732,10 @@
 }
 
 .modelAliasRow {
+  // Name-only catalog editor; aliases are managed on the Model Mapping page.
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
-
-  @media (max-width: 520px) {
-    grid-template-columns: 1fr auto;
-
-    input:first-child {
-      grid-column: 1 / -1;
-    }
-  }
 }
 
 .modelEntry {

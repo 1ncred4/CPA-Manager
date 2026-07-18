@@ -62,13 +62,8 @@ export function ModelEntriesEditor({
                 value={entry.name}
                 onChange={(e) => onUpdate(idx, { name: e.target.value })}
                 disabled={mutating}
-              />
-              <input
-                className={styles.input}
-                placeholder="alias (optional)"
-                value={entry.alias ?? ''}
-                onChange={(e) => onUpdate(idx, { alias: e.target.value })}
-                disabled={mutating}
+                autoComplete="off"
+                spellCheck={false}
               />
               <div className={styles.modelEntryActions}>
                 {extendedOptions && !expanded && entry.image === true ? (

@@ -41,7 +41,61 @@ interface BaseProviderFormProps {
 }
 
 const emptyHeader = () => ({ key: '', value: '' });
-const emptyModel = (): ModelEntryInput => ({ name: '', alias: '' });
+const emptyModel = (): ModelEntryInput => ({ name: '' });
+
+/** Dedupe models[] by name for the provider form (aliases live on the Mapping page). */
+const modelsToFormEntries = (
+  models: Array<{
+    name?: string;
+    alias?: string;
+    priority?: number;
+    testModel?: string;
+    image?: boolean;
+    thinking?: Record<string, unknown>;
+  }>,
+  includeOpenAIFields = false
+): ModelEntryInput[] => {
+  const seen = new Set<string>();
+  const out: ModelEntryInput[] = [];
+  models.forEach((m) => {
+    const name = String(m?.name ?? '').trim();
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (seen.has(key)) {
+      // Merge OpenAI flags onto the first occurrence.
+      if (includeOpenAIFields) {
+        const prev = out.find((e) => e.name.trim().toLowerCase() === key);
+        if (prev && m.image === true) prev.image = true;
+        if (prev && !prev.thinkingJson?.trim() && m.thinking) {
+          try {
+            prev.thinkingJson = JSON.stringify(m.thinking, null, 2);
+          } catch {
+            // ignore
+          }
+        }
+      }
+      return;
+    }
+    seen.add(key);
+    const entry: ModelEntryInput = {
+      name,
+      priority: m.priority,
+      testModel: m.testModel,
+    };
+    if (includeOpenAIFields) {
+      entry.image = m.image === true;
+      if (m.thinking && typeof m.thinking === 'object') {
+        try {
+          entry.thinkingJson = JSON.stringify(m.thinking, null, 2);
+        } catch {
+          entry.thinkingJson = '';
+        }
+      }
+    }
+    out.push(entry);
+  });
+  return out.length ? out : [emptyModel()];
+};
 const emptyApiKeyEntry = (): ApiKeyEntryInput => ({
   apiKey: '',
   proxyUrl: '',
@@ -50,11 +104,6 @@ const XAI_API_BASE_URL = 'https://api.x.ai/v1';
 
 const stripDisableAllRule = (list?: string[]): string[] =>
   (list ?? []).filter((s) => s.trim() !== '*');
-
-const formatJsonObject = (value?: Record<string, unknown>): string => {
-  if (!value || Object.keys(value).length === 0) return '';
-  return JSON.stringify(value, null, 2);
-};
 
 function buildInitialForm(
   brand: ProviderBrand,
@@ -104,16 +153,7 @@ function buildInitialForm(
       disabled: cfg.disabled === true,
       disableCooling: cfg.disableCooling === true,
       priority: cfg.priority,
-      models: cfg.models?.length
-        ? cfg.models.map((m) => ({
-            name: m.name,
-            alias: m.alias ?? '',
-            priority: m.priority,
-            testModel: m.testModel,
-            image: m.image === true,
-            thinkingJson: formatJsonObject(m.thinking),
-          }))
-        : [emptyModel()],
+      models: cfg.models?.length ? modelsToFormEntries(cfg.models, true) : [emptyModel()],
       headers: cfg.headers
         ? Object.entries(cfg.headers).map(([k, v]) => ({ key: k, value: String(v) }))
         : [emptyHeader()],
@@ -146,14 +186,7 @@ function buildInitialForm(
     disabled,
     disableCooling: cfg.disableCooling === true,
     priority: cfg.priority,
-    models: cfg.models?.length
-      ? cfg.models.map((m) => ({
-          name: m.name,
-          alias: m.alias ?? '',
-          priority: m.priority,
-          testModel: m.testModel,
-        }))
-      : [emptyModel()],
+    models: cfg.models?.length ? modelsToFormEntries(cfg.models) : [emptyModel()],
     headers: cfg.headers
       ? Object.entries(cfg.headers).map(([k, v]) => ({ key: k, value: String(v) }))
       : [emptyHeader()],
@@ -312,26 +345,25 @@ export function BaseProviderForm({
       prev.models.forEach((entry) => {
         const trimmed = (entry.name ?? '').trim();
         if (trimmed) {
-          if (seen.has(trimmed)) return;
-          seen.add(trimmed);
+          const key = trimmed.toLowerCase();
+          if (seen.has(key)) return;
+          seen.add(key);
         }
-        next.push(entry);
+        // Drop residual alias from catalog UI; mappings own aliases.
+        next.push({ ...entry, alias: undefined });
       });
       // If the existing list is just an empty placeholder row, drop it.
-      const placeholderIdx = next.findIndex(
-        (it) => !(it.name ?? '').trim() && !(it.alias ?? '').trim()
-      );
+      const placeholderIdx = next.findIndex((it) => !(it.name ?? '').trim());
       if (placeholderIdx !== -1) {
         next.splice(placeholderIdx, 1);
       }
       incoming.forEach((info) => {
         const trimmed = info.name.trim();
-        if (!trimmed || seen.has(trimmed)) return;
-        seen.add(trimmed);
-        next.push({
-          name: trimmed,
-          alias: (info.alias ?? '').trim(),
-        });
+        if (!trimmed) return;
+        const key = trimmed.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        next.push({ name: trimmed });
       });
       return { ...prev, models: next };
     });
@@ -779,6 +811,12 @@ export function BaseProviderForm({
           label={t('providersPage.form.modelsSection')}
           hint={`${existingModelNames.size}`}
         >
+          <p className={styles.sectionHintInline}>
+            {t('providersPage.form.modelsSectionHint', {
+              defaultValue:
+                '只维护去重后的模型 ID；别名/手动渠道请在「模型映射」中管理。',
+            })}
+          </p>
           <div className={styles.entriesList}>
             {discovery.available ? (
               <div className={styles.entriesToolbar}>

@@ -89,25 +89,102 @@ const buildExcludedModels = (
   return filtered.length ? filtered : undefined;
 };
 
+/**
+ * Build models[] for provider save.
+ * Catalog form only edits unique model names (+ OpenAI image/thinking).
+ * Mapping-page aliases (including multi-alias duplicates of the same name) are
+ * preserved from `existing.models` so provider edits cannot clobber manual mappings.
+ */
 const buildModelAliases = (
   models: ProviderEntryFormInput['models'] | undefined,
-  includeOpenAIFields = false
-): ModelAlias[] =>
-  (models ?? [])
-    .map((m) => {
-      const entry: ModelAlias = {
-        name: m.name.trim(),
-        alias: m.alias?.trim() || undefined,
-        priority: m.priority,
-        testModel: m.testModel,
-      };
-      if (includeOpenAIFields) {
-        entry.image = m.image === true;
-        entry.thinking = parseThinkingJson(m.thinkingJson);
+  includeOpenAIFields = false,
+  existingModels?: ModelAlias[] | null
+): ModelAlias[] => {
+  const lower = (v: string) => v.trim().toLowerCase();
+
+  // Desired catalog order (unique by name, first wins for OpenAI flags).
+  const catalog: Array<{
+    name: string;
+    priority?: number;
+    testModel?: string;
+    image?: boolean;
+    thinking?: Record<string, unknown>;
+  }> = [];
+  const catalogIndex = new Map<string, number>();
+  (models ?? []).forEach((m) => {
+    const name = m.name.trim();
+    if (!name) return;
+    const key = lower(name);
+    if (catalogIndex.has(key)) return;
+    catalogIndex.set(key, catalog.length);
+    catalog.push({
+      name,
+      priority: m.priority,
+      testModel: m.testModel,
+      image: includeOpenAIFields ? m.image === true : undefined,
+      thinking: includeOpenAIFields ? parseThinkingJson(m.thinkingJson) : undefined,
+    });
+  });
+
+  // Group existing alias bindings by model name (multi-channel support).
+  const existingByName = new Map<string, ModelAlias[]>();
+  (existingModels ?? []).forEach((entry) => {
+    const name = String(entry?.name ?? '').trim();
+    if (!name) return;
+    const key = lower(name);
+    const list = existingByName.get(key) ?? [];
+    list.push(entry);
+    existingByName.set(key, list);
+  });
+
+  const result: ModelAlias[] = [];
+  catalog.forEach((cat) => {
+    const key = lower(cat.name);
+    const prevList = existingByName.get(key) ?? [];
+    const meaningful = prevList.filter((e) => {
+      const alias = String(e.alias ?? '').trim();
+      return alias && lower(alias) !== key;
+    });
+
+    if (meaningful.length) {
+      meaningful.forEach((prev) => {
+        const next: ModelAlias = {
+          ...prev,
+          name: cat.name,
+        };
+        if (cat.priority !== undefined) next.priority = cat.priority;
+        if (cat.testModel !== undefined) next.testModel = cat.testModel;
+        if (includeOpenAIFields) {
+          next.image = cat.image === true;
+          if (cat.thinking) next.thinking = cat.thinking;
+          else delete next.thinking;
+        }
+        result.push(next);
+      });
+      return;
+    }
+
+    // No mapping aliases: emit a single catalog entry.
+    const entry: ModelAlias = { name: cat.name };
+    if (cat.priority !== undefined) entry.priority = cat.priority;
+    if (cat.testModel) entry.testModel = cat.testModel;
+    if (includeOpenAIFields) {
+      if (cat.image) entry.image = true;
+      if (cat.thinking) entry.thinking = cat.thinking;
+    }
+    // Prefer preserving other non-alias fields from the first existing row.
+    const bare = prevList[0];
+    if (bare) {
+      if (entry.priority === undefined && bare.priority !== undefined) {
+        entry.priority = bare.priority;
       }
-      return entry;
-    })
-    .filter((m) => m.name);
+      if (!entry.testModel && bare.testModel) entry.testModel = bare.testModel;
+    }
+    result.push(entry);
+  });
+
+  return result;
+};
 
 const buildProviderKeyConfig = (
   brand: 'gemini' | 'codex' | 'xai' | 'claude' | 'vertex',
@@ -115,7 +192,7 @@ const buildProviderKeyConfig = (
   existing?: ProviderKeyConfig | GeminiKeyConfig | null
 ): ProviderKeyConfig | GeminiKeyConfig => {
   const headers = headersFromEntries(input.headers);
-  const models = buildModelAliases(input.models);
+  const models = buildModelAliases(input.models, false, existing?.models);
   const excluded = buildExcludedModels(input.excludedModelsText, input.disabled, brand);
   const apiKeyChanged = input.apiKey.trim().length > 0;
   const next: ProviderKeyConfig = {
@@ -152,7 +229,7 @@ const buildOpenAIConfig = (
   existing?: OpenAIProviderConfig | null
 ): OpenAIProviderConfig => {
   const headers = headersFromEntries(input.headers);
-  const models = buildModelAliases(input.models, true);
+  const models = buildModelAliases(input.models, true, existing?.models);
   const apiKeyEntries =
     input.apiKeyEntries
       ?.map((entry, index) => {
