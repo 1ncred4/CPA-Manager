@@ -694,11 +694,57 @@ export function LogsPage() {
     };
   }, [fullscreenLogs]);
 
+  const getLevelClass = (level?: string) => {
+    switch (level) {
+      case 'info':
+        return styles.levelInfo;
+      case 'warn':
+        return styles.levelWarn;
+      case 'error':
+      case 'fatal':
+        return styles.levelError;
+      case 'debug':
+        return styles.levelDebug;
+      case 'trace':
+        return styles.levelTrace;
+      default:
+        return '';
+    }
+  };
+
+  const getStatusClass = (statusCode: number) => {
+    if (statusCode >= 200 && statusCode < 300) return styles.statusSuccess;
+    if (statusCode >= 300 && statusCode < 400) return styles.statusInfo;
+    if (statusCode >= 400 && statusCode < 500) return styles.statusWarn;
+    return styles.statusError;
+  };
+
+  const getMethodClass = (method?: string) => {
+    switch (method) {
+      case 'GET':
+        return styles.methodGet;
+      case 'POST':
+        return styles.methodPost;
+      case 'PUT':
+      case 'PATCH':
+        return styles.methodPut;
+      case 'DELETE':
+        return styles.methodDelete;
+      default:
+        return styles.methodOther;
+    }
+  };
+
   const renderLogRows = () =>
     parsedVisibleLines.map((line, index) => {
+      const isHttp = Boolean(line.method || line.path || typeof line.statusCode === 'number');
+      const hasMeta = Boolean(line.requestId || line.ip || (isHttp && line.source));
       const rowClassNames = [styles.logRow];
       if (line.level === 'warn') rowClassNames.push(styles.rowWarn);
       if (line.level === 'error' || line.level === 'fatal') rowClassNames.push(styles.rowError);
+      if (line.level === 'debug' || line.level === 'trace') rowClassNames.push(styles.rowDebug);
+      if (isHttp) rowClassNames.push(styles.rowHttp);
+
       return (
         <div
           key={`${logState.visibleFrom + index}-${line.raw}`}
@@ -715,69 +761,84 @@ export function LogsPage() {
             defaultValue: 'Double-click to copy',
           })}
         >
-          <div className={styles.timestamp}>{line.timestamp || ''}</div>
-          <div className={styles.rowMain}>
-            {line.level && (
-              <span
-                className={[
-                  styles.badge,
-                  line.level === 'info' ? styles.levelInfo : '',
-                  line.level === 'warn' ? styles.levelWarn : '',
-                  line.level === 'error' || line.level === 'fatal' ? styles.levelError : '',
-                  line.level === 'debug' ? styles.levelDebug : '',
-                  line.level === 'trace' ? styles.levelTrace : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-              >
+          <div className={styles.timestamp}>{line.timestamp || '—'}</div>
+
+          <div className={styles.levelCol}>
+            {line.level ? (
+              <span className={[styles.levelBadge, getLevelClass(line.level)].join(' ')}>
                 {line.level.toUpperCase()}
               </span>
+            ) : (
+              <span className={styles.levelPlaceholder} />
             )}
+          </div>
 
-            {line.source && (
-              <span className={styles.source} title={line.source}>
-                {line.source}
-              </span>
+          <div className={styles.rowBody}>
+            {isHttp ? (
+              <>
+                <div className={styles.primaryLine}>
+                  {line.method && (
+                    <span className={[styles.methodBadge, getMethodClass(line.method)].join(' ')}>
+                      {line.method}
+                    </span>
+                  )}
+                  {line.path && (
+                    <span className={styles.path} title={line.path}>
+                      {line.path}
+                    </span>
+                  )}
+                  {typeof line.statusCode === 'number' && (
+                    <span
+                      className={[
+                        styles.statusBadge,
+                        getStatusClass(line.statusCode),
+                      ].join(' ')}
+                    >
+                      {line.statusCode}
+                    </span>
+                  )}
+                  {line.latency && <span className={styles.latency}>{line.latency}</span>}
+                  {line.message && <span className={styles.message}>{line.message}</span>}
+                </div>
+                {hasMeta && (
+                  <div className={styles.metaLine}>
+                    {line.requestId && (
+                      <span className={styles.metaRequestId} title={line.requestId}>
+                        {line.requestId}
+                      </span>
+                    )}
+                    {line.requestId && line.ip && <span className={styles.metaSep} aria-hidden="true" />}
+                    {line.ip && <span className={styles.metaItem}>{line.ip}</span>}
+                    {(line.requestId || line.ip) && line.source && (
+                      <span className={styles.metaSep} aria-hidden="true" />
+                    )}
+                    {line.source && (
+                      <span className={styles.metaSource} title={line.source}>
+                        {line.source}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className={styles.primaryLine}>
+                {line.source && (
+                  <span className={styles.source} title={line.source}>
+                    {line.source}
+                  </span>
+                )}
+                {line.requestId && (
+                  <span className={styles.metaRequestId} title={line.requestId}>
+                    {line.requestId}
+                  </span>
+                )}
+                {line.message ? (
+                  <span className={styles.message}>{line.message}</span>
+                ) : (
+                  <span className={styles.messageMuted}>{line.raw}</span>
+                )}
+              </div>
             )}
-
-            {line.requestId && (
-              <span className={[styles.badge, styles.requestIdBadge].join(' ')} title={line.requestId}>
-                {line.requestId}
-              </span>
-            )}
-
-            {typeof line.statusCode === 'number' && (
-              <span
-                className={[
-                  styles.badge,
-                  styles.statusBadge,
-                  line.statusCode >= 200 && line.statusCode < 300
-                    ? styles.statusSuccess
-                    : line.statusCode >= 300 && line.statusCode < 400
-                      ? styles.statusInfo
-                      : line.statusCode >= 400 && line.statusCode < 500
-                        ? styles.statusWarn
-                        : styles.statusError,
-                ].join(' ')}
-              >
-                {line.statusCode}
-              </span>
-            )}
-
-            {line.latency && <span className={styles.pill}>{line.latency}</span>}
-            {line.ip && <span className={styles.pill}>{line.ip}</span>}
-
-            {line.method && (
-              <span className={[styles.badge, styles.methodBadge].join(' ')}>{line.method}</span>
-            )}
-
-            {line.path && (
-              <span className={styles.path} title={line.path}>
-                {line.path}
-              </span>
-            )}
-
-            {line.message && <span className={styles.message}>{line.message}</span>}
           </div>
         </div>
       );
