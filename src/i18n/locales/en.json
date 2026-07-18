@@ -1597,6 +1597,10 @@
       "duplicateAlias": "This custom model name already exists.",
       "noTargets": "Select at least one target model.",
       "channelConflict": "Only one model per OAuth channel can map to this name.",
+      "identityOnly": "Selected targets match the custom name, so no alias rewrite is needed. Same-named models from multiple sources appear under Mapped automatically.",
+      "saveSuccessIdentityOnly": "Same-name federation confirmed (no alias rewrite; shown under Mapped automatically).",
+      "saveSuccessIdentitySkipped": "Mapping saved (targets that match the custom name need no separate entry; clients match the native model directly).",
+      "resourceMissing": "Provider entry not found ({{id}}). Refresh and try again.",
       "oauthUnsupported": "This CPA version does not support OAuth model mapping. API Key aliases below can still be shown.",
       "oauthLoadFailed": "Failed to load OAuth model mappings."
     }

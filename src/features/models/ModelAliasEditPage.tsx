@@ -34,10 +34,12 @@ import {
 import {
   applyApiKeyModelAliasChanges,
   applyOauthAliasTargetChanges,
+  assembleFederatedMappingRows,
   buildEnabledMappingOptions,
   buildFederatedMappingRows,
   buildOauthDisplayNameMap,
   collectChannelsForAlias,
+  filterPersistableMappingTargets,
   getMappingDraftSignature,
   mappingTargetKey,
   planAliasTargetAssignments,
@@ -258,22 +260,25 @@ export function ModelAliasEditPage() {
       setEnabledOptions(options);
 
       const enabledKeySet = new Set(accessRows.filter((r) => r.enabled).map((r) => r.key));
-      const federated = buildFederatedMappingRows({
-        modelAlias: nextAlias,
-        resources: nextResources,
-        oauthDisplayNames: buildOauthDisplayNameMap(oauthModels),
-        enabledKeySet,
-        providerLabels: {
-          oauth: (channel) => getTypeLabel(t, channel),
-          apiKey: (resource) => {
-            const brandLabel = t(`providersPage.providerNames.${resource.brand}`, {
-              defaultValue: resource.brand,
-            });
-            const entryLabel = resource.name ?? resource.identifier;
-            return entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
+      const federated = assembleFederatedMappingRows(
+        buildFederatedMappingRows({
+          modelAlias: nextAlias,
+          resources: nextResources,
+          oauthDisplayNames: buildOauthDisplayNameMap(oauthModels),
+          enabledKeySet,
+          providerLabels: {
+            oauth: (channel) => getTypeLabel(t, channel),
+            apiKey: (resource) => {
+              const brandLabel = t(`providersPage.providerNames.${resource.brand}`, {
+                defaultValue: resource.brand,
+              });
+              const entryLabel = resource.name ?? resource.identifier;
+              return entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
+            },
           },
-        },
-      });
+        }),
+        accessRows
+      );
 
       setExistingAliasKeys(federated.map((row) => row.aliasKey));
 
@@ -354,6 +359,13 @@ export function ModelAliasEditPage() {
           return t('modelsPage.mapping.channelConflict', {
             defaultValue: '同一 OAuth 渠道下只能映射一个模型到此名称。',
           });
+        case 'identity_only':
+          // Same-name multi-provider federation is auto-grouped in the list;
+          // editing page treats pure identity selection as a no-op confirm.
+          return t('modelsPage.mapping.identityOnly', {
+            defaultValue:
+              '所选目标与自定义名相同，无需改写别名。同名多来源模型会自动出现在「已映射」列表中。',
+          });
         default:
           return null;
       }
@@ -433,6 +445,22 @@ export function ModelAliasEditPage() {
       existingAliasKeys,
       editingAliasKey: isEditing ? toAliasKey(baselineAlias) : null,
     });
+
+    // Pure same-name selection: nothing to write (backend drops alias===name).
+    // Confirm as success so the auto-grouped list row is the source of truth.
+    if (error === 'identity_only') {
+      showNotification(
+        t('modelsPage.mapping.saveSuccessIdentityOnly', {
+          defaultValue:
+            '已确认同名模型联邦（无需改写别名，已自动出现在「已映射」列表）',
+        }),
+        'success'
+      );
+      allowNextNavigation();
+      handleBack();
+      return;
+    }
+
     if (error) {
       showNotification(validationMessage(error) ?? error, 'error');
       return;
@@ -453,8 +481,17 @@ export function ModelAliasEditPage() {
     try {
       const aliasLiteral = alias.trim();
       const prevAliasKey = toAliasKey(baselineAlias || aliasLiteral);
-      const nextPlan = planAliasTargetAssignments(selectedTargets);
-      const baselinePlan = planAliasTargetAssignments(baselineTargets);
+      // Identity targets (alias===modelId) cannot be persisted; only write real redirects.
+      const persistableSelected = filterPersistableMappingTargets(aliasLiteral, selectedTargets);
+      const persistableBaseline = filterPersistableMappingTargets(
+        baselineAlias || aliasLiteral,
+        baselineTargets
+      );
+      const nextPlan = planAliasTargetAssignments(persistableSelected, aliasLiteral);
+      const baselinePlan = planAliasTargetAssignments(
+        persistableBaseline,
+        baselineAlias || aliasLiteral
+      );
 
       // Channels that need write: any in baseline or next oauth assignments, plus rename cleanup
       const oauthChannels = new Set<string>([
@@ -495,7 +532,14 @@ export function ModelAliasEditPage() {
 
       for (const resourceId of resourceIds) {
         const resource = resources.find((r) => r.id === resourceId);
-        if (!resource) continue;
+        if (!resource) {
+          throw new Error(
+            t('modelsPage.mapping.resourceMissing', {
+              defaultValue: '未找到提供商条目（{{id}}），请刷新后重试。',
+              id: resourceId,
+            })
+          );
+        }
         const rawModels = ((resource.raw as { models?: ModelAlias[] })?.models ??
           []) as ModelAlias[];
         const previousModelIds = baselinePlan.apiKeyByResource.get(resourceId)?.modelIds ?? [];
@@ -520,8 +564,16 @@ export function ModelAliasEditPage() {
         await updateApiKeyModels(resource, nextModels);
       }
 
+      const skippedIdentity =
+        selectedTargets.length - persistableSelected.length > 0 &&
+        persistableSelected.length > 0;
       showNotification(
-        t('modelsPage.mapping.saveSuccess', { defaultValue: '映射已保存' }),
+        skippedIdentity
+          ? t('modelsPage.mapping.saveSuccessIdentitySkipped', {
+              defaultValue:
+                '映射已保存（与自定义名相同的目标无需单独配置，客户端会直接匹配原生模型）',
+            })
+          : t('modelsPage.mapping.saveSuccess', { defaultValue: '映射已保存' }),
         'success'
       );
       allowNextNavigation();

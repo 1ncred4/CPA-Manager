@@ -32,6 +32,7 @@ import {
 import {
   applyApiKeyModelAliasChanges,
   applyOauthAliasTargetChanges,
+  assembleFederatedMappingRows,
   buildEnabledMappingOptions,
   buildFederatedMappingRows,
   buildOauthDisplayNameMap,
@@ -321,7 +322,7 @@ export function useModelMappingList(): UseModelMappingListResult {
       return resolvedTheme === 'dark' && logo?.darkSrc ? logo.darkSrc : (logo?.src ?? null);
     };
 
-    return mergeSuspendedIntoFederatedRows(baseRows, suspended, {
+    const withSuspended = mergeSuspendedIntoFederatedRows(baseRows, suspended, {
       oauthDisplayNames,
       providerLabels: {
         oauth: (channel) => getTypeLabel(t, channel),
@@ -332,7 +333,11 @@ export function useModelMappingList(): UseModelMappingListResult {
         apiKey: apiKeyIcon,
       },
     });
+
+    // 配置别名 + 多来源同名自动联邦 + 原生 identity 挂载。
+    return assembleFederatedMappingRows(withSuspended, accessRows);
   }, [
+    accessRows,
     allApiKeyResources,
     apiBase,
     enabledKeySet,

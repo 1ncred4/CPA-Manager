@@ -1623,6 +1623,10 @@
       "duplicateAlias": "此自訂模型名已存在。",
       "noTargets": "請至少選擇一個對應目標模型。",
       "channelConflict": "同一 OAuth 渠道下只能對應一個模型到此名稱。",
+      "identityOnly": "所選目標與自訂名相同，無需改寫別名。同名多來源模型會自動出現在「已對應」列表中。",
+      "saveSuccessIdentityOnly": "已確認同名模型聯邦（無需改寫別名，已自動出現在「已對應」列表）",
+      "saveSuccessIdentitySkipped": "對應已儲存（與自訂名相同的目標無需單獨設定，用戶端會直接匹配原生模型）",
+      "resourceMissing": "找不到供應商項目（{{id}}），請重新整理後再試。",
       "oauthUnsupported": "目前 CPA 版本不支援 OAuth 模型對應。下方仍會顯示 API Key 側的模型別名對應。",
       "oauthLoadFailed": "載入 OAuth 模型對應失敗。"
     }
