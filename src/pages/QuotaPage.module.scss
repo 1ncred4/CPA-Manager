@@ -9,11 +9,8 @@
 
 .pageHeader {
   display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  justify-content: space-between;
+  flex-direction: column;
   gap: $spacing-md;
-  flex-wrap: wrap;
 }
 
 .pageHeaderInfo {
@@ -36,12 +33,12 @@
   margin: 0;
 }
 
-.headerActions {
+.toolbar {
   display: flex;
   gap: $spacing-sm;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   min-width: 0;
 
   :global(.btn.btn-sm) {
@@ -55,7 +52,8 @@
 
   @include mobile {
     width: 100%;
-    justify-content: stretch;
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 
@@ -222,7 +220,7 @@
 }
 
 @include mobile {
-  .headerActions {
+  .toolbar {
     gap: $spacing-xs;
   }
 }

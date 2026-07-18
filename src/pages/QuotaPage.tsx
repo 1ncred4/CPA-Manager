@@ -153,7 +153,9 @@ export function QuotaPage() {
   } as unknown as Record<QuotaType, QuotaLoaderEntry>;
 
   const loadersRef = useRef(loaders);
-  loadersRef.current = loaders;
+  useEffect(() => {
+    loadersRef.current = loaders;
+  });
   const didAutoRefreshRef = useRef(false);
 
   useEffect(() => {
@@ -257,7 +259,8 @@ export function QuotaPage() {
           <h1 className={styles.pageTitle}>{t('quota_management.title')}</h1>
           <p className={styles.description}>{t('quota_management.description')}</p>
         </div>
-        <div className={styles.headerActions}>
+
+        <div className={styles.toolbar}>
           <div className={styles.viewModeToggle}>
             {FILTER_OPTIONS.map((option) => (
               <Button
