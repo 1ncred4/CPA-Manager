@@ -29,7 +29,8 @@
   color: var(--muted-foreground);
 }
 
-/* Outer track — same pill frame as ModelsPage .tabs */
+/* Outer track — framed group around provider chips.
+   Use a moderate radius (not 999px) so multi-line wraps don't look ballooned. */
 .chipGrid {
   display: flex;
   flex-wrap: wrap;
@@ -37,7 +38,7 @@
   align-items: center;
   min-width: 0;
   padding: 3px;
-  border-radius: 999px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
   border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);

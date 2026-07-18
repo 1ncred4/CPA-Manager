@@ -738,12 +738,11 @@ export function LogsPage() {
   const renderLogRows = () =>
     parsedVisibleLines.map((line, index) => {
       const isHttp = Boolean(line.method || line.path || typeof line.statusCode === 'number');
-      const hasMeta = Boolean(line.requestId || line.ip || (isHttp && line.source));
+      // HTTP 行的 gin_logger source 是噪音，只在应用日志里显示 source
+      const showSource = Boolean(line.source && !isHttp);
       const rowClassNames = [styles.logRow];
       if (line.level === 'warn') rowClassNames.push(styles.rowWarn);
       if (line.level === 'error' || line.level === 'fatal') rowClassNames.push(styles.rowError);
-      if (line.level === 'debug' || line.level === 'trace') rowClassNames.push(styles.rowDebug);
-      if (isHttp) rowClassNames.push(styles.rowHttp);
 
       return (
         <div
@@ -773,62 +772,42 @@ export function LogsPage() {
             )}
           </div>
 
-          <div className={styles.rowBody}>
+          <div className={styles.rowMain}>
             {isHttp ? (
               <>
-                <div className={styles.primaryLine}>
-                  {line.method && (
-                    <span className={[styles.methodBadge, getMethodClass(line.method)].join(' ')}>
-                      {line.method}
-                    </span>
-                  )}
-                  {line.path && (
-                    <span className={styles.path} title={line.path}>
-                      {line.path}
-                    </span>
-                  )}
-                  {typeof line.statusCode === 'number' && (
-                    <span
-                      className={[
-                        styles.statusBadge,
-                        getStatusClass(line.statusCode),
-                      ].join(' ')}
-                    >
-                      {line.statusCode}
-                    </span>
-                  )}
-                  {line.latency && <span className={styles.latency}>{line.latency}</span>}
-                  {line.message && <span className={styles.message}>{line.message}</span>}
-                </div>
-                {hasMeta && (
-                  <div className={styles.metaLine}>
-                    {line.requestId && (
-                      <span className={styles.metaRequestId} title={line.requestId}>
-                        {line.requestId}
-                      </span>
-                    )}
-                    {line.requestId && line.ip && <span className={styles.metaSep} aria-hidden="true" />}
-                    {line.ip && <span className={styles.metaItem}>{line.ip}</span>}
-                    {(line.requestId || line.ip) && line.source && (
-                      <span className={styles.metaSep} aria-hidden="true" />
-                    )}
-                    {line.source && (
-                      <span className={styles.metaSource} title={line.source}>
-                        {line.source}
-                      </span>
-                    )}
-                  </div>
+                {line.method && (
+                  <span className={[styles.methodBadge, getMethodClass(line.method)].join(' ')}>
+                    {line.method}
+                  </span>
                 )}
+                {line.path && (
+                  <span className={styles.path} title={line.path}>
+                    {line.path}
+                  </span>
+                )}
+                {typeof line.statusCode === 'number' && (
+                  <span className={[styles.statusBadge, getStatusClass(line.statusCode)].join(' ')}>
+                    {line.statusCode}
+                  </span>
+                )}
+                {line.latency && <span className={styles.latency}>{line.latency}</span>}
+                {line.requestId && (
+                  <span className={styles.requestId} title={line.requestId}>
+                    {line.requestId}
+                  </span>
+                )}
+                {line.ip && <span className={styles.ip}>{line.ip}</span>}
+                {line.message && <span className={styles.message}>{line.message}</span>}
               </>
             ) : (
-              <div className={styles.primaryLine}>
-                {line.source && (
+              <>
+                {showSource && (
                   <span className={styles.source} title={line.source}>
                     {line.source}
                   </span>
                 )}
                 {line.requestId && (
-                  <span className={styles.metaRequestId} title={line.requestId}>
+                  <span className={styles.requestId} title={line.requestId}>
                     {line.requestId}
                   </span>
                 )}
@@ -837,7 +816,7 @@ export function LogsPage() {
                 ) : (
                   <span className={styles.messageMuted}>{line.raw}</span>
                 )}
-              </div>
+              </>
             )}
           </div>
         </div>

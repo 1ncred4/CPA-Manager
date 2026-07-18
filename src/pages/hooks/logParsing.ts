@@ -96,6 +96,21 @@ const extractNamedRequestId = (text: string): string | undefined => {
   return id;
 };
 
+const stripPathQuotes = (value: string): string => {
+  let path = value.trim();
+  if (
+    (path.startsWith('"') && path.endsWith('"')) ||
+    (path.startsWith("'") && path.endsWith("'"))
+  ) {
+    path = path.slice(1, -1);
+  }
+  // Some loggers escape inner quotes: \"/v1/...\"
+  if (path.startsWith('\\"') && path.endsWith('\\"')) {
+    path = path.slice(2, -2);
+  }
+  return path;
+};
+
 const extractHttpMethodAndPath = (text: string): { method?: HttpMethod; path?: string } => {
   const match = text.match(HTTP_METHOD_REGEX);
   if (!match) return {};
@@ -103,7 +118,8 @@ const extractHttpMethodAndPath = (text: string): { method?: HttpMethod; path?: s
   const method = match[1] as HttpMethod;
   const index = match.index ?? 0;
   const after = text.slice(index + match[0].length).trim();
-  const path = after ? after.split(/\s+/)[0] : undefined;
+  const rawPath = after ? after.split(/\s+/)[0] : undefined;
+  const path = rawPath ? stripPathQuotes(rawPath) : undefined;
   return { method, path };
 };
 

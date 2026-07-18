@@ -571,40 +571,38 @@
 }
 
 // ---------------------------------------------------------------------------
-// Log rows — 3-column grid: time | level | body
-// HTTP: primary line (method path status latency) + muted meta line
-// App: single primary line (source + message)
+// Log rows — single-line, 3-column grid: time | level | content
 // ---------------------------------------------------------------------------
 
 .logRow {
   display: grid;
-  grid-template-columns: 150px 58px minmax(0, 1fr);
+  grid-template-columns: 150px 54px minmax(0, 1fr);
   column-gap: 10px;
-  align-items: start;
-  padding: 8px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 55%, transparent);
+  align-items: center;
+  min-height: 32px;
+  padding: 5px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
   border-left: 3px solid transparent;
   cursor: copy;
   font-family:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
     monospace;
   font-size: 12.5px;
-  line-height: 1.45;
+  line-height: 1.4;
   color: var(--text-primary);
-  transition: background-color 0.12s ease;
 
   &:nth-child(even) {
-    background: color-mix(in srgb, var(--bg-primary) 55%, transparent);
+    background: color-mix(in srgb, var(--bg-primary) 50%, transparent);
   }
 
   &:hover {
-    background: rgba($primary-color, 0.07);
+    background: rgba($primary-color, 0.06);
   }
 
   @include tablet {
-    grid-template-columns: 132px 54px minmax(0, 1fr);
+    grid-template-columns: 132px 50px minmax(0, 1fr);
     column-gap: 8px;
-    padding: 7px 10px;
+    padding: 5px 10px;
     font-size: 12px;
   }
 
@@ -612,62 +610,45 @@
     grid-template-columns: 1fr auto;
     grid-template-areas:
       'time level'
-      'body body';
-    row-gap: 4px;
+      'main main';
+    row-gap: 3px;
     column-gap: 8px;
-    padding: 9px 10px;
+    align-items: start;
+    min-height: 0;
+    padding: 8px 10px;
     font-size: 11.5px;
   }
 }
 
-.rowHttp {
-  // slightly tighter rhythm for request rows with meta
-  padding-top: 7px;
-  padding-bottom: 7px;
-}
-
 .rowWarn {
   border-left-color: var(--warning-color);
-  background: color-mix(in srgb, var(--warning-bg, rgba(245, 158, 11, 0.12)) 35%, transparent);
-
-  &:hover {
-    background: color-mix(in srgb, var(--warning-bg, rgba(245, 158, 11, 0.12)) 55%, transparent);
-  }
 }
 
 .rowError {
   border-left-color: var(--error-color);
-  background: color-mix(in srgb, rgba($error-color, 0.1) 70%, transparent);
+  background: color-mix(in srgb, rgba($error-color, 0.08) 80%, transparent);
 
   &:hover {
-    background: color-mix(in srgb, rgba($error-color, 0.14) 80%, transparent);
+    background: color-mix(in srgb, rgba($error-color, 0.12) 85%, transparent);
   }
-}
-
-.rowDebug {
-  border-left-color: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
 }
 
 .timestamp {
   color: var(--text-tertiary);
   white-space: nowrap;
-  padding-top: 3px;
   font-variant-numeric: tabular-nums;
   font-size: 11.5px;
   letter-spacing: 0.01em;
 
   @include mobile {
     grid-area: time;
-    white-space: nowrap;
-    padding-top: 2px;
     font-size: 11px;
   }
 }
 
 .levelCol {
   display: flex;
-  align-items: flex-start;
-  padding-top: 1px;
+  align-items: center;
   min-width: 0;
 
   @include mobile {
@@ -680,27 +661,27 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 52px;
-  padding: 2px 6px;
-  border-radius: 5px;
-  font-size: 10.5px;
+  min-width: 48px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.04em;
   border: 1px solid transparent;
   white-space: nowrap;
-  line-height: 1.3;
+  line-height: 1.35;
 }
 
 .levelPlaceholder {
   display: inline-block;
-  min-width: 52px;
+  min-width: 48px;
   height: 1px;
 }
 
 .levelInfo {
   color: var(--info-color);
   background: rgba($primary-color, 0.12);
-  border-color: rgba($primary-color, 0.22);
+  border-color: rgba($primary-color, 0.2);
 }
 
 .levelWarn {
@@ -712,92 +693,40 @@
 .levelError {
   color: var(--error-color);
   background: rgba($error-color, 0.12);
-  border-color: rgba($error-color, 0.25);
+  border-color: rgba($error-color, 0.22);
 }
 
 .levelDebug,
 .levelTrace {
   color: var(--text-secondary);
-  background: rgba(107, 114, 128, 0.12);
-  border-color: rgba(107, 114, 128, 0.22);
+  background: rgba(107, 114, 128, 0.1);
+  border-color: rgba(107, 114, 128, 0.18);
 }
 
-.rowBody {
+.rowMain {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-
-  @include mobile {
-    grid-area: body;
-  }
-}
-
-.primaryLine {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.metaLine {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 2px;
-  min-width: 0;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.metaItem,
-.metaRequestId,
-.metaSource {
-  display: inline-block;
-  max-width: 280px;
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: bottom;
-}
 
-.metaSep {
-  display: inline-block;
-  width: 14px;
-  text-align: center;
-  color: color-mix(in srgb, var(--text-tertiary) 65%, transparent);
-  flex: 0 0 auto;
-
-  &::before {
-    content: '·';
+  @include mobile {
+    grid-area: main;
+    flex-wrap: wrap;
+    row-gap: 4px;
+    overflow: visible;
   }
-}
-
-.metaRequestId {
-  color: #0e7490;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-
-  :global([data-theme='dark']) & {
-    color: #22d3ee;
-  }
-}
-
-.metaSource {
-  color: var(--text-tertiary);
-  font-style: normal;
 }
 
 .methodBadge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 46px;
-  padding: 1px 7px;
-  border-radius: 5px;
-  font-size: 10.5px;
+  min-width: 42px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.03em;
   border: 1px solid transparent;
@@ -808,7 +737,7 @@
 .methodGet {
   color: #047857;
   background: rgba(16, 185, 129, 0.12);
-  border-color: rgba(16, 185, 129, 0.28);
+  border-color: rgba(16, 185, 129, 0.25);
 
   :global([data-theme='dark']) & {
     color: #34d399;
@@ -818,7 +747,7 @@
 .methodPost {
   color: #1d4ed8;
   background: rgba(59, 130, 246, 0.12);
-  border-color: rgba(59, 130, 246, 0.28);
+  border-color: rgba(59, 130, 246, 0.25);
 
   :global([data-theme='dark']) & {
     color: #60a5fa;
@@ -828,7 +757,7 @@
 .methodPut {
   color: #b45309;
   background: rgba(245, 158, 11, 0.14);
-  border-color: rgba(245, 158, 11, 0.3);
+  border-color: rgba(245, 158, 11, 0.28);
 
   :global([data-theme='dark']) & {
     color: #fbbf24;
@@ -838,7 +767,7 @@
 .methodDelete {
   color: #b91c1c;
   background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.28);
+  border-color: rgba(239, 68, 68, 0.25);
 
   :global([data-theme='dark']) & {
     color: #f87171;
@@ -848,14 +777,14 @@
 .methodOther {
   color: var(--text-primary);
   background: rgba($primary-color, 0.08);
-  border-color: rgba($primary-color, 0.22);
+  border-color: rgba($primary-color, 0.2);
 }
 
 .statusBadge {
   display: inline-flex;
   align-items: center;
-  padding: 1px 7px;
-  border-radius: 5px;
+  padding: 1px 6px;
+  border-radius: 4px;
   font-size: 11px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -873,7 +802,7 @@
 .statusInfo {
   color: var(--info-color);
   background: rgba($primary-color, 0.12);
-  border-color: rgba($primary-color, 0.25);
+  border-color: rgba($primary-color, 0.22);
 }
 
 .statusWarn {
@@ -895,13 +824,35 @@
   font-weight: 600;
   white-space: nowrap;
   flex: 0 0 auto;
+  min-width: 3.2em;
+}
+
+.requestId {
+  color: #0e7490;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex: 0 0 auto;
+
+  :global([data-theme='dark']) & {
+    color: #22d3ee;
+  }
+}
+
+.ip {
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .source {
-  color: color-mix(in srgb, var(--text-secondary) 92%, var(--primary-color) 8%);
-  font-weight: 600;
-  max-width: 240px;
-  flex: 0 1 auto;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  flex: 0 0 auto;
+  max-width: 160px;
   @include text-ellipsis;
 
   @include mobile {
@@ -911,34 +862,38 @@
 
 .path {
   color: var(--text-primary);
-  font-weight: 700;
+  font-weight: 600;
   min-width: 0;
-  max-width: min(640px, 100%);
-  flex: 1 1 auto;
+  max-width: min(520px, 42vw);
+  flex: 0 1 auto;
   @include text-ellipsis;
 
   @include mobile {
     max-width: 100%;
-    flex-basis: 100%;
-    order: 10;
+    flex: 1 1 100%;
   }
 }
 
 .message {
   color: var(--text-secondary);
-  word-break: break-word;
   min-width: 0;
-  flex: 1 1 160px;
+  flex: 1 1 auto;
+  @include text-ellipsis;
 
   @include mobile {
     flex-basis: 100%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    word-break: break-word;
   }
 }
 
 .messageMuted {
   color: var(--text-tertiary);
-  word-break: break-word;
   min-width: 0;
+  flex: 1 1 auto;
+  @include text-ellipsis;
 }
 
 // ---------------------------------------------------------------------------
