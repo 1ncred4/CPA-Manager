@@ -729,7 +729,8 @@
     "search_empty_desc": "Попробуйте другой запрос или сбросьте фильтры.",
     "double_click_copy_hint": "Дважды нажмите, чтобы скопировать строку журнала",
     "copy_success": "Строка журнала скопирована",
-    "copy_failed": "Не удалось скопировать"
+    "copy_failed": "Не удалось скопировать",
+    "hide_management_short": "Скрыть mgmt"
   },
   "config_management": {
     "title": "Панель конфигурации",

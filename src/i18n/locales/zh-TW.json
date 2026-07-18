@@ -768,7 +768,8 @@
     "search_empty_desc": "嘗試更換關鍵字或清空篩選條件。",
     "double_click_copy_hint": "雙擊複製記錄原文",
     "copy_success": "已複製記錄原文",
-    "copy_failed": "複製失敗"
+    "copy_failed": "複製失敗",
+    "hide_management_short": "隱藏管理"
   },
   "config_management": {
     "title": "設定面板",

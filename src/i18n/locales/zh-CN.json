@@ -742,7 +742,8 @@
     "search_empty_desc": "尝试更换关键字或清空筛选条件。",
     "double_click_copy_hint": "双击复制日志原文",
     "copy_success": "已复制日志原文",
-    "copy_failed": "复制失败"
+    "copy_failed": "复制失败",
+    "hide_management_short": "隐藏管理"
   },
   "config_management": {
     "title": "配置面板",

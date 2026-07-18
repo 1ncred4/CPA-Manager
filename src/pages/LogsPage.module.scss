@@ -1,62 +1,95 @@
 @use '../styles/mixins' as *;
 
+// ---------------------------------------------------------------------------
+// Shell — fill main-content-logs; chrome is compact, stage owns the space
+// ---------------------------------------------------------------------------
+
 .container {
   width: 100%;
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  gap: $spacing-sm;
 
   @include mobile {
     min-height: auto;
     overflow: visible;
+    gap: $spacing-md;
   }
 }
 
-.pageHeader {
+// ---------------------------------------------------------------------------
+// Compact chrome (title / tabs / search / actions) — never compete with logs
+// ---------------------------------------------------------------------------
+
+.chrome {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  flex: 0 0 auto;
+}
+
+.topBar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: $spacing-md;
-  margin: 0 0 $spacing-lg 0;
+  min-height: 36px;
 
   @include mobile {
     align-items: flex-start;
     flex-direction: column;
-    gap: $spacing-xs;
+    gap: $spacing-sm;
   }
 }
 
+.topBarLeft {
+  display: flex;
+  align-items: center;
+  gap: $spacing-md;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
 .pageTitle {
-  font-size: 28px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--text-primary);
   margin: 0;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .tabBar {
-  display: flex;
-  gap: $spacing-xs;
-  margin-bottom: $spacing-lg;
-  border-bottom: 1px solid var(--border-color);
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-primary) 72%, transparent);
 }
 
 .tabItem {
   @include button-reset;
-  padding: 12px 20px;
-  font-size: 14px;
-  font-weight: 500;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
   color: var(--text-secondary);
-  background: transparent;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 650;
+  line-height: 1.25;
+  white-space: nowrap;
   transition:
     color 0.15s ease,
+    background-color 0.15s ease,
     border-color 0.15s ease;
 
-  &:hover {
+  &:hover:not(:disabled) {
     color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
   }
 
   &:focus,
@@ -67,118 +100,146 @@
 }
 
 .tabActive {
-  color: var(--primary-color);
-  border-bottom-color: var(--primary-color);
-}
-
-.content {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-lg;
-  flex: 1;
-  min-height: 0;
-
-  @include mobile {
-    gap: $spacing-md;
-    min-height: auto;
-  }
-}
-
-.logCard {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-
-  @include mobile {
-    flex: 0 0 auto;
-    min-height: auto;
-    overflow: visible;
-  }
+  color: var(--bg-primary);
+  background: var(--text-primary);
+  border-color: var(--text-primary);
 }
 
 .runtimeNotice {
   flex: 0 0 auto;
-  padding: 4px 10px;
+  padding: 3px 10px;
   border: 1px solid var(--border-color);
   border-radius: $radius-full;
   color: var(--text-secondary);
   background: var(--bg-secondary);
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.3;
+  white-space: nowrap;
 }
+
+.alertStack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+// ---------------------------------------------------------------------------
+// Toolbar — single dense row: search + filter + toggles + actions
+// ---------------------------------------------------------------------------
 
 .toolbar {
   display: flex;
   align-items: center;
-  gap: $spacing-sm;
+  gap: 8px;
   flex-wrap: wrap;
-  margin-left: auto;
-
-  @include mobile {
-    align-items: flex-start;
-    margin-left: 0;
-    width: 100%;
-  }
-}
-
-.filters {
-  display: flex;
-  align-items: center;
-  gap: $spacing-md;
-  flex-wrap: wrap;
-  margin-bottom: $spacing-md;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
 
   :global(.form-group) {
     margin: 0;
   }
 
   @include mobile {
-    gap: $spacing-sm;
-    margin-bottom: $spacing-sm;
+    gap: 6px;
   }
 }
 
 .searchWrapper {
-  flex: 1;
-  min-width: 220px;
+  flex: 1 1 220px;
+  min-width: 160px;
   max-width: 420px;
+
+  @include mobile {
+    flex: 1 1 100%;
+    max-width: none;
+  }
 }
 
-.filterPanelHeader {
-  display: flex;
+.searchInput {
+  padding-right: 44px !important;
+}
+
+.searchIcon {
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.searchClear {
+  @include button-reset;
+  display: inline-flex;
   align-items: center;
-  flex: 1 1 100%;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: $radius-full;
+  color: var(--text-secondary);
+
+  &:hover {
+    background: var(--bg-secondary);
+  }
 }
 
-.filterPanelToggle {
+.toolbarGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.toolbarGroupEnd {
+  margin-left: auto;
+
+  @include mobile {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+.toolButton {
   white-space: nowrap;
 }
 
-.filterPanelButtonContent {
+.toolButtonActive {
+  color: var(--primary-color) !important;
+  border-color: rgba($primary-color, 0.45) !important;
+  background: rgba($primary-color, 0.12) !important;
+}
+
+.buttonContent {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+
+  svg {
+    flex: 0 0 auto;
+  }
 }
 
-.filterPanelCount {
+.filterCount {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
+  padding: 1px 7px;
   border-radius: $radius-full;
-  background: rgba($primary-color, 0.12);
+  background: rgba($primary-color, 0.14);
   color: var(--primary-color);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.2;
+  font-weight: 700;
 }
 
-.structuredFilters {
+// ---------------------------------------------------------------------------
+// Collapsible structured filters
+// ---------------------------------------------------------------------------
+
+.filterDrawer {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1 1 100%;
-  padding: 8px 10px;
+  padding: 10px 12px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: $radius-md;
@@ -196,7 +257,7 @@
   color: var(--text-secondary);
   font-weight: 700;
   line-height: 28px;
-  min-width: 68px;
+  min-width: 56px;
 }
 
 .filterChipList {
@@ -205,6 +266,7 @@
   gap: 6px;
   flex-wrap: wrap;
   flex: 1;
+  min-width: 0;
 }
 
 .filterChip {
@@ -251,21 +313,12 @@
   color: var(--text-tertiary);
 }
 
+.filterDrawerFooter {
+  display: flex;
+  justify-content: flex-end;
+}
+
 @include mobile {
-  .filterPanelHeader {
-    width: 100%;
-  }
-
-  .filterPanelToggle {
-    width: 100%;
-  }
-
-  .filterPanelButtonContent {
-    width: 100%;
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-
   .filterChipGroup {
     flex-direction: column;
     gap: 6px;
@@ -277,148 +330,139 @@
   }
 }
 
-.searchInput {
-  padding-right: 44px !important;
-}
+// ---------------------------------------------------------------------------
+// Stage — THE page body: logs fill remaining viewport height
+// ---------------------------------------------------------------------------
 
-.searchIcon {
-  color: var(--text-tertiary);
-  pointer-events: none;
-}
+.stage {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 
-.searchClear {
-  @include button-reset;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: $radius-full;
-  color: var(--text-secondary);
-
-  &:hover {
-    background: var(--bg-secondary);
-  }
-}
-
-.filterStats {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.removedCount {
-  color: var(--text-tertiary);
-}
-
-.actionButton {
-  white-space: nowrap;
-}
-
-.buttonContent {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-
-  svg {
+  @include mobile {
     flex: 0 0 auto;
+    min-height: auto;
+    overflow: visible;
   }
 }
 
-.switchLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.logCard {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  // Override global .card padding so the log panel can go edge-to-edge
+  padding: 0 !important;
+  border-radius: $radius-md;
+  gap: 0;
+  background: var(--bg-primary);
 
-  svg {
+  @include mobile {
     flex: 0 0 auto;
+    min-height: auto;
+    overflow: visible;
   }
 }
+
+.errorCard {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: $spacing-md !important;
+
+  @include mobile {
+    flex: 0 0 auto;
+    min-height: auto;
+    overflow: visible;
+  }
+}
+
+.errorBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+}
+
+.toolbarHint {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+// ---------------------------------------------------------------------------
+// Log panel — primary visual surface
+// ---------------------------------------------------------------------------
 
 .logPanel {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
+  background: color-mix(in srgb, var(--bg-secondary) 92%, #000 8%);
+  border: none;
+  border-radius: 0;
   flex: 1 1 auto;
-  min-height: 280px;
-  max-height: calc(100vh - 320px);
+  min-height: 0;
   height: auto;
+  max-height: none;
   overflow: auto;
-  resize: vertical;
+  resize: none;
   position: relative;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
   overscroll-behavior: contain;
 
-  @include tablet {
-    min-height: 240px;
-    max-height: calc(100vh - 300px);
+  @include mobile {
+    min-height: 420px;
+    height: min(70vh, 640px);
+    max-height: none;
+    flex: 0 0 auto;
+    border-radius: 0 0 $radius-md $radius-md;
   }
+}
+
+.statusBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.3;
+  min-height: 32px;
 
   @include mobile {
-    min-height: 360px;
-    height: 420px;
-    max-height: 480px;
-    flex: 0 0 auto;
-  }
-}
-
-.errorPanel {
-  height: 480px;
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-
-  :global(.item-meta) {
-    flex: 1 1 260px;
-    min-width: 0;
-  }
-
-  :global(.item-title) {
-    overflow-wrap: anywhere;
-  }
-
-  :global(.item-actions) {
     flex-wrap: wrap;
-    justify-content: flex-end;
+    gap: 4px 10px;
   }
 }
 
-.errorLogViewer {
+.statusBarStats {
   display: flex;
-  flex-direction: column;
-  gap: $spacing-md;
-  min-height: 0;
-}
-
-.errorLogViewerMeta {
-  display: flex;
+  align-items: center;
+  gap: 12px;
   flex-wrap: wrap;
-  gap: $spacing-sm $spacing-md;
-  color: var(--text-secondary);
-  font-size: 12px;
+  min-width: 0;
 }
 
-.errorLogContent {
-  margin: 0;
-  padding: 12px;
-  max-height: min(58vh, 640px);
-  overflow: auto;
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
-    monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre;
-  -webkit-overflow-scrolling: touch;
+.statusMuted {
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.statusHint {
+  color: var(--text-tertiary);
+  white-space: nowrap;
+
+  @include mobile {
+    width: 100%;
+  }
 }
 
 .loadMoreBanner {
@@ -429,16 +473,17 @@
   align-items: center;
   justify-content: space-between;
   gap: $spacing-sm;
-  padding: 8px 12px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--border-color);
-  background: var(--bg-primary);
+  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11.5px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 
   @include mobile {
     flex-direction: column;
     align-items: flex-start;
-    justify-content: flex-start;
     gap: $spacing-xs;
 
     > span {
@@ -484,7 +529,7 @@
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
     monospace;
   font-size: 12.5px;
-  line-height: 1.45;
+  line-height: 1.5;
 
   @include tablet {
     padding: 8px 10px;
@@ -499,10 +544,10 @@
 
 .logRow {
   display: grid;
-  grid-template-columns: 170px 1fr;
-  gap: $spacing-md;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-color);
+  grid-template-columns: 156px 1fr;
+  gap: $spacing-sm;
+  padding: 7px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
   border-left: 3px solid transparent;
   cursor: copy;
   font-family:
@@ -517,15 +562,15 @@
   }
 
   @include tablet {
-    grid-template-columns: 140px 1fr;
+    grid-template-columns: 136px 1fr;
     gap: $spacing-sm;
-    padding: 8px 10px;
+    padding: 6px 10px;
     font-size: 12px;
   }
 
   @include mobile {
     grid-template-columns: 1fr;
-    gap: $spacing-xs;
+    gap: 4px;
     padding: 8px 10px;
     font-size: 11.5px;
   }
@@ -543,6 +588,7 @@
   color: var(--text-tertiary);
   white-space: nowrap;
   padding-top: 2px;
+  font-variant-numeric: tabular-nums;
 
   @include mobile {
     white-space: normal;
@@ -560,9 +606,9 @@
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
+  padding: 1px 7px;
   border-radius: $radius-full;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 800;
   border: 1px solid var(--border-color);
   background: var(--bg-primary);
@@ -573,9 +619,9 @@
 .pill {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
+  padding: 1px 7px;
   border-radius: $radius-full;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   border: 1px solid var(--border-color);
   background: var(--bg-primary);
@@ -585,7 +631,7 @@
 
 .source {
   color: var(--text-secondary);
-  max-width: 240px;
+  max-width: 220px;
   @include text-ellipsis;
 
   @include mobile {
@@ -683,124 +729,100 @@
   }
 }
 
-@media (max-height: 960px) {
-  @media (min-width: 769px) {
-    .logPanel {
-      min-height: 160px;
-      max-height: calc(100vh - 300px);
-    }
+// ---------------------------------------------------------------------------
+// Empty / loading states inside the stage
+// ---------------------------------------------------------------------------
+
+.stageEmpty {
+  flex: 1 1 auto;
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: $spacing-lg;
+
+  @include mobile {
+    min-height: 280px;
   }
 }
 
-@media (max-height: 820px) {
-  .pageTitle {
-    font-size: 24px;
+.stageLoading {
+  flex: 1 1 auto;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+// ---------------------------------------------------------------------------
+// Error logs tab
+// ---------------------------------------------------------------------------
+
+.errorPanel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+
+  @include mobile {
+    height: 480px;
+    flex: 0 0 auto;
   }
 
-  .pageHeader {
-    margin-bottom: $spacing-md;
+  :global(.item-meta) {
+    flex: 1 1 260px;
+    min-width: 0;
   }
 
-  .tabBar {
-    margin-bottom: $spacing-md;
+  :global(.item-title) {
+    overflow-wrap: anywhere;
   }
 
-  .tabItem {
-    padding: 10px 16px;
-  }
-
-  .content {
-    gap: $spacing-md;
-  }
-
-  @media (min-width: 769px) {
-    .filters {
-      flex: 0 0 auto;
-      gap: $spacing-sm;
-      margin-bottom: $spacing-sm;
-      max-height: 260px;
-      overflow: auto;
-      padding-right: 4px;
-      overscroll-behavior: contain;
-    }
-
-    .logPanel {
-      min-height: 0;
-      max-height: calc(100vh - 280px);
-    }
-  }
-
-  .logCard {
-    padding: $spacing-md;
-  }
-
-  .logRow {
-    padding: 8px 10px;
-    font-size: 12px;
-  }
-
-  .errorPanel {
-    height: 360px;
+  :global(.item-actions) {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }
 
-@media (max-height: 600px) {
-  .pageTitle {
-    font-size: 20px;
-  }
-
-  .pageHeader {
-    margin-bottom: $spacing-sm;
-  }
-
-  .tabBar {
-    margin-bottom: $spacing-sm;
-  }
-
-  .tabItem {
-    padding: 8px 12px;
-    font-size: 13px;
-  }
-
-  .content {
-    gap: $spacing-sm;
-  }
-
-  .filters {
-    margin-bottom: $spacing-sm;
-    gap: $spacing-sm;
-  }
-
-  @media (min-width: 769px) {
-    .filters {
-      max-height: 180px;
-    }
-
-    .logPanel {
-      min-height: 0;
-      max-height: calc(100vh - 220px);
-    }
-  }
-
-  .logCard {
-    padding: $spacing-sm;
-  }
-
-  .logRow {
-    padding: 6px 8px;
-    font-size: 11px;
-    grid-template-columns: 130px 1fr;
-    gap: $spacing-xs;
-  }
-
-  .loadMoreBanner {
-    padding: 6px 10px;
-  }
-
-  .errorPanel {
-    height: 280px;
-  }
+.errorLogViewer {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+  min-height: 0;
 }
+
+.errorLogViewerMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-sm $spacing-md;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.errorLogContent {
+  margin: 0;
+  padding: 12px;
+  max-height: min(58vh, 640px);
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  -webkit-overflow-scrolling: touch;
+}
+
+// ---------------------------------------------------------------------------
+// Fullscreen — chrome stays thin, log panel eats the viewport
+// ---------------------------------------------------------------------------
 
 .logCardFullscreen {
   position: fixed;
@@ -809,17 +831,37 @@
   min-height: 0;
   width: 100vw;
   height: 100vh;
-  padding: $spacing-lg;
+  padding: 0 !important;
   border-radius: 0;
   border: none;
   overflow: hidden;
   background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
 
   @include mobile {
-    padding: $spacing-md;
+    padding: 0 !important;
     min-height: 0;
     overflow: hidden;
   }
+}
+
+.fullscreenChrome {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
+}
+
+.fullscreenToolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 :global(body.logs-fullscreen-active) :global(.page-transition__layer) {

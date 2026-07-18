@@ -742,7 +742,8 @@
     "search_empty_desc": "Try a different keyword or clear the filters.",
     "double_click_copy_hint": "Double-click to copy raw log line",
     "copy_success": "Log copied to clipboard",
-    "copy_failed": "Copy failed"
+    "copy_failed": "Copy failed",
+    "hide_management_short": "Hide mgmt"
   },
   "config_management": {
     "title": "Config Panel",
