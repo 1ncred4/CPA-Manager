@@ -57,8 +57,7 @@ export type MappingValidationError =
   | 'alias_required'
   | 'no_targets'
   | 'duplicate_alias'
-  | 'channel_conflict'
-  | 'resource_conflict';
+  | 'channel_conflict';
 
 const lower = (value: string): string => value.trim().toLowerCase();
 
@@ -303,22 +302,17 @@ export function validateMappingSelection(input: {
     }
   }
 
+// OAuth channel still enforces one source model per alias (backend uniqueness).
+  // API Key entries may map multiple models to the same custom alias.
   const oauthChannels = new Map<string, string>();
-  const apiKeyResources = new Map<string, string>();
 
   for (const target of input.targets) {
-    if (target.source === 'oauth') {
-      const channel = normalizeProviderKey(target.channel);
-      const modelKey = lower(target.modelId);
-      const prev = oauthChannels.get(channel);
-      if (prev && prev !== modelKey) return 'channel_conflict';
-      oauthChannels.set(channel, modelKey);
-    } else {
-      const modelKey = lower(target.modelId);
-      const prev = apiKeyResources.get(target.resourceId);
-      if (prev && prev !== modelKey) return 'resource_conflict';
-      apiKeyResources.set(target.resourceId, modelKey);
-    }
+    if (target.source !== 'oauth') continue;
+    const channel = normalizeProviderKey(target.channel);
+    const modelKey = lower(target.modelId);
+    const prev = oauthChannels.get(channel);
+    if (prev && prev !== modelKey) return 'channel_conflict';
+    oauthChannels.set(channel, modelKey);
   }
 
   return null;
@@ -389,7 +383,7 @@ export function applyOauthAliasTargetChanges(input: {
 export function applyApiKeyModelAliasChanges(input: {
   models: ModelAlias[];
   alias: string;
-  /** 该 resource 上最终应持有此 alias 的 modelId（0 或 1 个） */
+  /** 该 resource 上最终应持有此 alias 的 modelId 列表（可多个） */
   nextModelIds: string[];
   /** 编辑前该 resource 上属于旧 alias（rename 时）的 modelId，需一并清空 */
   previousModelIds?: string[];

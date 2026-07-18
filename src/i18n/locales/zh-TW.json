@@ -1607,7 +1607,6 @@
       "duplicateAlias": "此自訂模型名已存在。",
       "noTargets": "請至少選擇一個對應目標模型。",
       "channelConflict": "同一 OAuth 渠道下只能對應一個模型到此名稱。",
-      "resourceConflict": "同一 API Key 項目下只能對應一個模型到此名稱。",
       "oauthUnsupported": "目前 CPA 版本不支援 OAuth 模型對應。下方仍會顯示 API Key 側的模型別名對應。",
       "oauthLoadFailed": "載入 OAuth 模型對應失敗。"
     }

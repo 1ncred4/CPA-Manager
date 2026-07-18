@@ -259,6 +259,7 @@ describe('modelMapping', () => {
       })
     ).toBe('channel_conflict');
 
+    // Same API Key entry may map multiple models to one custom alias.
     expect(
       validateMappingSelection({
         alias: 'x',
@@ -268,7 +269,7 @@ describe('modelMapping', () => {
         ],
         existingAliasKeys: [],
       })
-    ).toBe('resource_conflict');
+    ).toBeNull();
   });
 
   test('applyOauthAliasTargetChanges preserves other aliases and forceMapping', () => {
@@ -324,6 +325,25 @@ describe('modelMapping', () => {
     expect(next.find((m) => m.name === 'a')?.alias).toBeUndefined();
     expect(next.find((m) => m.name === 'b')?.alias).toBe('chat');
     expect(next.find((m) => m.name === 'b')?.priority).toBe(1);
+    expect(next.find((m) => m.name === 'c')?.alias).toBe('other');
+  });
+
+  test('applyApiKeyModelAliasChanges allows multiple models on one resource to share an alias', () => {
+    const models = [
+      { name: 'a', alias: 'chat' },
+      { name: 'b' },
+      { name: 'c', alias: 'other' },
+    ];
+
+    const next = applyApiKeyModelAliasChanges({
+      models,
+      alias: 'chat',
+      nextModelIds: ['a', 'b'],
+      previousModelIds: ['a'],
+    });
+
+    expect(next.find((m) => m.name === 'a')?.alias).toBe('chat');
+    expect(next.find((m) => m.name === 'b')?.alias).toBe('chat');
     expect(next.find((m) => m.name === 'c')?.alias).toBe('other');
   });
 

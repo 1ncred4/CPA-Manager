@@ -1581,7 +1581,6 @@
       "duplicateAlias": "该自定义模型名已存在。",
       "noTargets": "请至少选择一个映射目标模型。",
       "channelConflict": "同一 OAuth 渠道下只能映射一个模型到此名称。",
-      "resourceConflict": "同一 API Key 条目下只能映射一个模型到此名称。",
       "oauthUnsupported": "当前 CPA 版本不支持 OAuth 模型映射。下方仍会展示 API Key 侧的模型别名映射。",
       "oauthLoadFailed": "加载 OAuth 模型映射失败。"
     }

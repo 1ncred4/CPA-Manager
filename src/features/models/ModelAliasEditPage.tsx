@@ -346,10 +346,6 @@ export function ModelAliasEditPage() {
           return t('modelsPage.mapping.channelConflict', {
             defaultValue: '同一 OAuth 渠道下只能映射一个模型到此名称。',
           });
-        case 'resource_conflict':
-          return t('modelsPage.mapping.resourceConflict', {
-            defaultValue: '同一 API Key 条目下只能映射一个模型到此名称。',
-          });
         default:
           return null;
       }

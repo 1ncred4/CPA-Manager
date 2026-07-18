@@ -1581,7 +1581,6 @@
       "duplicateAlias": "This custom model name already exists.",
       "noTargets": "Select at least one target model.",
       "channelConflict": "Only one model per OAuth channel can map to this name.",
-      "resourceConflict": "Only one model per API Key entry can map to this name.",
       "oauthUnsupported": "This CPA version does not support OAuth model mapping. API Key aliases below can still be shown.",
       "oauthLoadFailed": "Failed to load OAuth model mappings."
     }
