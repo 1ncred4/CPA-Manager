@@ -24,6 +24,11 @@ import {
   type ModelAccessRow,
 } from './modelAccessRows';
 import {
+  listManualMappingClaims,
+  MANUAL_MAPPING_CLAIMS_CHANGED_EVENT,
+  unclaimManualMapping,
+} from './mappingClaims';
+import {
   clearSuspendedForAlias,
   listAllSuspended,
   mergeSuspendedIntoFederatedRows,
@@ -32,14 +37,17 @@ import {
 import {
   applyApiKeyModelAliasChanges,
   applyOauthAliasTargetChanges,
-  assembleFederatedMappingRows,
+  assembleManualAndAutoMappingRows,
   buildEnabledMappingOptions,
   buildFederatedMappingRows,
   buildOauthDisplayNameMap,
   buildUnmappedModels,
+  collectConfiguredApiKeyResourceIdsForAlias,
+  collectConfiguredOauthChannelsForAlias,
   collectMappedTargetKeys,
   filterFederatedMappingRows,
   filterUnmappedModels,
+  isManualMappingRow,
   toAliasKey,
   type FederatedMappingRow,
   type MappingPickerOption,
@@ -49,8 +57,15 @@ import {
 import { updateApiKeyModels } from './updateApiKeyModels';
 
 export type UseModelMappingListResult = {
+  /** 全部行（手动 + 自动），兼容旧用法 */
   rows: FederatedMappingRow[];
   filteredRows: FederatedMappingRow[];
+  /** 手动映射：后端有自定义 alias 的渠道 */
+  manualRows: FederatedMappingRow[];
+  filteredManualRows: FederatedMappingRow[];
+  /** 自动映射：未入手动的模型按 modelId 聚合 */
+  autoRows: FederatedMappingRow[];
+  filteredAutoRows: FederatedMappingRow[];
   unmappedRows: UnmappedModelRow[];
   filteredUnmappedRows: UnmappedModelRow[];
   search: string;
@@ -93,6 +108,8 @@ export function useModelMappingList(): UseModelMappingListResult {
   const [accessRows, setAccessRows] = useState<ModelAccessRow[]>([]);
   /** 递增以在同页剪枝/恢复后重读 localStorage 挂起项 */
   const [suspendedEpoch, setSuspendedEpoch] = useState(0);
+  /** 递增以重读「手动认领」 */
+  const [claimsEpoch, setClaimsEpoch] = useState(0);
 
   const loadRequestRef = useRef(0);
   const workbenchRef = useRef(workbench);
@@ -228,14 +245,22 @@ export function useModelMappingList(): UseModelMappingListResult {
       if (detail?.apiBase && detail.apiBase !== apiBase) return;
       setSuspendedEpoch((n) => n + 1);
     };
+    const onClaimsChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ apiBase?: string }>).detail;
+      if (detail?.apiBase && detail.apiBase !== apiBase) return;
+      setClaimsEpoch((n) => n + 1);
+    };
     const onStorage = (event: StorageEvent) => {
-      if (!event.key || !event.key.includes('suspended-model-mappings')) return;
-      setSuspendedEpoch((n) => n + 1);
+      if (!event.key) return;
+      if (event.key.includes('suspended-model-mappings')) setSuspendedEpoch((n) => n + 1);
+      if (event.key.includes('manual-mapping-claims')) setClaimsEpoch((n) => n + 1);
     };
     window.addEventListener(SUSPENDED_MAPPINGS_CHANGED_EVENT, onSuspendedChanged);
+    window.addEventListener(MANUAL_MAPPING_CLAIMS_CHANGED_EVENT, onClaimsChanged);
     window.addEventListener('storage', onStorage);
     return () => {
       window.removeEventListener(SUSPENDED_MAPPINGS_CHANGED_EVENT, onSuspendedChanged);
+      window.removeEventListener(MANUAL_MAPPING_CLAIMS_CHANGED_EVENT, onClaimsChanged);
       window.removeEventListener('storage', onStorage);
     };
   }, [apiBase]);
@@ -278,7 +303,7 @@ export function useModelMappingList(): UseModelMappingListResult {
     return set;
   }, [accessRows]);
 
-  const rows = useMemo(() => {
+  const { manualRows, autoRows, rows } = useMemo(() => {
     const oauthDisplayNames = buildOauthDisplayNameMap(oauthModels);
     const baseRows = buildFederatedMappingRows({
       modelAlias,
@@ -334,12 +359,19 @@ export function useModelMappingList(): UseModelMappingListResult {
       },
     });
 
-    // 配置别名 + 多来源同名自动联邦 + 原生 identity 挂载。
-    return assembleFederatedMappingRows(withSuspended, accessRows);
+    void claimsEpoch;
+    const claims = listManualMappingClaims(apiBase);
+    const split = assembleManualAndAutoMappingRows(withSuspended, accessRows, claims);
+    return {
+      manualRows: split.manualRows,
+      autoRows: split.autoRows,
+      rows: [...split.manualRows, ...split.autoRows],
+    };
   }, [
     accessRows,
     allApiKeyResources,
     apiBase,
+    claimsEpoch,
     enabledKeySet,
     modelAlias,
     oauthModels,
@@ -348,11 +380,20 @@ export function useModelMappingList(): UseModelMappingListResult {
     t,
   ]);
 
+  const filteredManualRows = useMemo(
+    () => filterFederatedMappingRows(manualRows, search),
+    [manualRows, search]
+  );
+  const filteredAutoRows = useMemo(
+    () => filterFederatedMappingRows(autoRows, search),
+    [autoRows, search]
+  );
   const filteredRows = useMemo(
-    () => filterFederatedMappingRows(rows, search),
-    [rows, search]
+    () => [...filteredManualRows, ...filteredAutoRows],
+    [filteredAutoRows, filteredManualRows]
   );
 
+  // 已覆盖：手动 + 自动；剩余一般为空（自动已吸收全部启用未映射模型）
   const unmappedRows = useMemo(() => {
     const mappedKeys = collectMappedTargetKeys(rows);
     return buildUnmappedModels(accessRows, mappedKeys);
@@ -365,7 +406,11 @@ export function useModelMappingList(): UseModelMappingListResult {
 
   const enabledOptions = useMemo(() => buildEnabledMappingOptions(accessRows), [accessRows]);
 
-  const existingAliasKeys = useMemo(() => rows.map((row) => row.aliasKey), [rows]);
+  // 重名校验只挡手动渠道；自动渠道名与手动重名时会并入手动
+  const existingAliasKeys = useMemo(
+    () => manualRows.map((row) => row.aliasKey),
+    [manualRows]
+  );
 
   const deleteAlias = useCallback(
     (alias: string) => {
@@ -373,42 +418,43 @@ export function useModelMappingList(): UseModelMappingListResult {
       const row = rows.find((r) => r.aliasKey === aliasKey);
       if (!row) return;
 
+      // 自动渠道无后端配置，删除无意义；提示用户用「转为手动」编辑
+      if (!isManualMappingRow(row)) {
+        showNotification(
+          t('modelsPage.mapping.autoDeleteHint', {
+            defaultValue:
+              '自动映射由启用模型自动生成，无需删除。可点击编辑转为手动映射。',
+          }),
+          'info'
+        );
+        return;
+      }
+
       showConfirmation({
         title: t('modelsPage.mapping.deleteTitle', { defaultValue: '删除映射' }),
         message: t('modelsPage.mapping.deleteConfirm', {
-          defaultValue: '确定删除自定义模型「{{alias}}」的全部映射目标？',
+          defaultValue:
+            '确定删除自定义模型「{{alias}}」的手动映射？删除后同名启用模型会重新出现在自动映射中。',
           alias: row.alias,
         }),
         variant: 'danger',
         confirmText: t('common.confirm'),
         onConfirm: async () => {
           try {
-            // 仅清理真实配置中的目标；挂起灰标一并丢弃
-            const baselineTargets: MappingTargetRef[] = row.targets
-              .filter((target) => !target.suspended)
-              .map((target) =>
-                target.source === 'oauth'
-                  ? { source: 'oauth', channel: target.channel, modelId: target.modelId }
-                  : {
-                      source: 'apiKey',
-                      resourceId: target.resourceId,
-                      brand: target.brand,
-                      modelId: target.modelId,
-                    }
-              );
-
             clearSuspendedForAlias(apiBase, row.alias);
+            // 清除本地手动认领，使同名模型回到自动映射
+            unclaimManualMapping(apiBase, row.alias);
 
-            // OAuth: clear alias from every involved channel
-            const oauthChannels = new Set(
-              baselineTargets
-                .filter((t): t is Extract<MappingTargetRef, { source: 'oauth' }> => t.source === 'oauth')
-                .map((t) => t.channel)
-            );
             const currentAlias = modelAliasRef.current;
+            // 只清理后端真正存在该 alias 的 channel / resource
+            const oauthChannels = collectConfiguredOauthChannelsForAlias(
+              currentAlias,
+              aliasKey
+            );
             await Promise.all(
-              Array.from(oauthChannels).map(async (channel) => {
+              oauthChannels.map(async (channel) => {
                 const entries = currentAlias[channel] ?? [];
+                if (!entries.length) return;
                 const next = applyOauthAliasTargetChanges({
                   entries,
                   alias: row.alias,
@@ -422,26 +468,28 @@ export function useModelMappingList(): UseModelMappingListResult {
               })
             );
 
-            // API Key: clear alias on involved resources
-            const resourceIds = new Set(
-              baselineTargets
-                .filter(
-                  (t): t is Extract<MappingTargetRef, { source: 'apiKey' }> => t.source === 'apiKey'
-                )
-                .map((t) => t.resourceId)
+            const resourceIds = collectConfiguredApiKeyResourceIdsForAlias(
+              resourcesRef.current,
+              aliasKey
             );
             await Promise.all(
-              Array.from(resourceIds).map(async (resourceId) => {
+              resourceIds.map(async (resourceId) => {
                 const resource = resourcesRef.current.find((r) => r.id === resourceId);
                 if (!resource) return;
                 const rawModels = ((resource.raw as { models?: ModelAlias[] })?.models ??
                   []) as ModelAlias[];
-                const previousModelIds = baselineTargets
-                  .filter(
-                    (t): t is Extract<MappingTargetRef, { source: 'apiKey' }> =>
-                      t.source === 'apiKey' && t.resourceId === resourceId
-                  )
-                  .map((t) => t.modelId);
+                const previousModelIds = rawModels
+                  .filter((m) => {
+                    const name = String(m.name ?? '').trim();
+                    const a = String(m.alias ?? '').trim();
+                    return (
+                      name &&
+                      a &&
+                      toAliasKey(a) === aliasKey &&
+                      toAliasKey(a) !== name.trim().toLowerCase()
+                    );
+                  })
+                  .map((m) => String(m.name).trim());
                 const nextModels = applyApiKeyModelAliasChanges({
                   models: rawModels,
                   alias: row.alias,
@@ -453,7 +501,9 @@ export function useModelMappingList(): UseModelMappingListResult {
             );
 
             showNotification(
-              t('modelsPage.mapping.deleteSuccess', { defaultValue: '映射已删除' }),
+              t('modelsPage.mapping.deleteSuccess', {
+                defaultValue: '手动映射已删除，同名模型已回到自动映射',
+              }),
               'success'
             );
             await loadAll();
@@ -472,6 +522,10 @@ export function useModelMappingList(): UseModelMappingListResult {
   return {
     rows,
     filteredRows,
+    manualRows,
+    filteredManualRows,
+    autoRows,
+    filteredAutoRows,
     unmappedRows,
     filteredUnmappedRows,
     search,

@@ -3,10 +3,11 @@ import {
   applyApiKeyModelAliasChanges,
   applyOauthAliasTargetChanges,
   assembleFederatedMappingRows,
+  assembleManualAndAutoMappingRows,
   attachNativeIdentityTargets,
+  buildAutoMappingRows,
   buildEnabledMappingOptions,
   buildFederatedMappingRows,
-  buildSameNameFederatedRows,
   buildUnmappedModels,
   collectMappedTargetKeys,
   diffMappingTargets,
@@ -415,7 +416,7 @@ describe('modelMapping', () => {
     ).toBe(true);
   });
 
-  test('buildSameNameFederatedRows groups multi-provider same model ids', () => {
+  test('buildAutoMappingRows groups models by id; manual absorbs same-name', () => {
     const accessRows: ModelAccessRow[] = [
       {
         key: 'oauth:codex:gpt-image-2',
@@ -459,19 +460,51 @@ describe('modelMapping', () => {
       },
     ];
 
-    const sameName = buildSameNameFederatedRows(accessRows);
-    expect(sameName).toHaveLength(1);
-    expect(sameName[0].aliasKey).toBe('gpt-image-2');
-    expect(sameName[0].targets).toHaveLength(2);
+    // Auto: every uncovered model id becomes a channel (single-source included).
+    const autoOnly = buildAutoMappingRows(accessRows, new Set());
+    expect(autoOnly.map((r) => r.aliasKey).sort()).toEqual([
+      'claude-sonnet-4-5',
+      'gpt-image-2',
+    ]);
+    expect(autoOnly.find((r) => r.aliasKey === 'gpt-image-2')?.targets).toHaveLength(2);
+    expect(autoOnly.find((r) => r.aliasKey === 'gpt-image-2')?.kind).toBe('auto');
 
-    const assembled = assembleFederatedMappingRows([], accessRows);
-    expect(assembled).toHaveLength(1);
-    expect(assembled[0].alias).toBe('gpt-image-2');
+    const { manualRows, autoRows } = assembleManualAndAutoMappingRows([], accessRows);
+    expect(manualRows).toHaveLength(0);
+    expect(autoRows).toHaveLength(2);
 
-    // Same-name federation leaves those targets out of "unmapped".
-    const mappedKeys = collectMappedTargetKeys(assembled);
-    const unmapped = buildUnmappedModels(accessRows, mappedKeys);
-    expect(unmapped.map((r) => r.modelId)).toEqual(['claude-sonnet-4-5']);
+    // Claim gpt-image-2 as manual → absorbed out of auto.
+    const claimed = assembleManualAndAutoMappingRows([], accessRows, ['gpt-image-2']);
+    expect(claimed.manualRows).toHaveLength(1);
+    expect(claimed.manualRows[0].aliasKey).toBe('gpt-image-2');
+    expect(claimed.manualRows[0].targets).toHaveLength(2);
+    expect(claimed.autoRows.map((r) => r.aliasKey)).toEqual(['claude-sonnet-4-5']);
+
+    // Configured alias merges same-name natives into manual.
+    const configured = buildFederatedMappingRows({
+      modelAlias: {},
+      resources: [
+        makeResource({
+          id: 'openaiCompatibility:0:tool',
+          brand: 'openaiCompatibility',
+          raw: {
+            name: 'Tool',
+            models: [{ name: 'doubao-seedream-5.0-lite', alias: 'gpt-image-2' }],
+          },
+        }),
+      ],
+      providerLabels: { oauth: (c) => c, apiKey: () => 'Tool' },
+    });
+    const withConfig = assembleManualAndAutoMappingRows(configured, accessRows);
+    expect(withConfig.manualRows).toHaveLength(1);
+    expect(withConfig.manualRows[0].aliasKey).toBe('gpt-image-2');
+    // Persistable doubao + two native gpt-image-2
+    expect(withConfig.manualRows[0].targets.length).toBeGreaterThanOrEqual(3);
+    expect(withConfig.autoRows.map((r) => r.aliasKey)).toEqual(['claude-sonnet-4-5']);
+
+    // Flat assemble still works.
+    const flat = assembleFederatedMappingRows([], accessRows);
+    expect(flat.every((r) => r.kind === 'auto' || r.kind === 'manual')).toBe(true);
   });
 
   test('applyOauthAliasTargetChanges preserves other aliases and forceMapping', () => {

@@ -34,6 +34,13 @@
   white-space: nowrap;
 }
 
+.sectionHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+
 .banner {
   padding: 10px 12px;
   border-radius: 10px;
@@ -123,12 +130,42 @@
 
 .aliasCell {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
   overflow: hidden;
+}
+
+.aliasName {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.kindBadge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: $radius-full;
+  border: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.kindBadgeManual {
+  color: var(--primary-color, #3b82f6);
+  border-color: color-mix(in srgb, var(--primary-color, #3b82f6) 35%, var(--border-color));
+  background: color-mix(in srgb, var(--primary-color, #3b82f6) 10%, transparent);
+}
+
+.kindBadgeAuto {
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--muted-foreground) 8%, transparent);
 }
 
 .targetsCell {

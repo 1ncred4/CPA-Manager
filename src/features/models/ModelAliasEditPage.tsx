@@ -32,13 +32,20 @@ import {
   type ModelAccessRow,
 } from './modelAccessRows';
 import {
+  claimManualMapping,
+  listManualMappingClaims,
+  unclaimManualMapping,
+} from './mappingClaims';
+import {
   applyApiKeyModelAliasChanges,
   applyOauthAliasTargetChanges,
-  assembleFederatedMappingRows,
+  assembleManualAndAutoMappingRows,
   buildEnabledMappingOptions,
   buildFederatedMappingRows,
   buildOauthDisplayNameMap,
   collectChannelsForAlias,
+  collectConfiguredApiKeyResourceIdsForAlias,
+  collectConfiguredOauthChannelsForAlias,
   filterPersistableMappingTargets,
   getMappingDraftSignature,
   mappingTargetKey,
@@ -61,6 +68,7 @@ export function ModelAliasEditPage() {
   const [searchParams] = useSearchParams();
   const { showNotification } = useNotificationStore();
   const connectionStatus = useAuthStore((s) => s.connectionStatus);
+  const apiBase = useAuthStore((s) => s.apiBase);
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
   const workbench = useProviderWorkbench();
   const disableControls = connectionStatus !== 'connected';
@@ -260,27 +268,32 @@ export function ModelAliasEditPage() {
       setEnabledOptions(options);
 
       const enabledKeySet = new Set(accessRows.filter((r) => r.enabled).map((r) => r.key));
-      const federated = assembleFederatedMappingRows(
-        buildFederatedMappingRows({
-          modelAlias: nextAlias,
-          resources: nextResources,
-          oauthDisplayNames: buildOauthDisplayNameMap(oauthModels),
-          enabledKeySet,
-          providerLabels: {
-            oauth: (channel) => getTypeLabel(t, channel),
-            apiKey: (resource) => {
-              const brandLabel = t(`providersPage.providerNames.${resource.brand}`, {
-                defaultValue: resource.brand,
-              });
-              const entryLabel = resource.name ?? resource.identifier;
-              return entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
-            },
+      const configured = buildFederatedMappingRows({
+        modelAlias: nextAlias,
+        resources: nextResources,
+        oauthDisplayNames: buildOauthDisplayNameMap(oauthModels),
+        enabledKeySet,
+        providerLabels: {
+          oauth: (channel) => getTypeLabel(t, channel),
+          apiKey: (resource) => {
+            const brandLabel = t(`providersPage.providerNames.${resource.brand}`, {
+              defaultValue: resource.brand,
+            });
+            const entryLabel = resource.name ?? resource.identifier;
+            return entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
           },
-        }),
-        accessRows
+        },
+      });
+      const { manualRows, autoRows } = assembleManualAndAutoMappingRows(
+        configured,
+        accessRows,
+        listManualMappingClaims(apiBase)
       );
+      // 编辑页可加载手动 + 自动行（自动「转为手动」时预填）
+      const federated = [...manualRows, ...autoRows];
 
-      setExistingAliasKeys(federated.map((row) => row.aliasKey));
+      // 重名校验只针对已有手动渠道
+      setExistingAliasKeys(manualRows.map((row) => row.aliasKey));
 
       if (aliasFromParams) {
         const match = federated.find((row) => row.aliasKey === toAliasKey(aliasFromParams));
@@ -321,7 +334,7 @@ export function ModelAliasEditPage() {
         setInitialLoading(false);
       }
     }
-  }, [aliasFromParams, preselectFromParams, resolvedTheme, t]);
+  }, [aliasFromParams, apiBase, preselectFromParams, resolvedTheme, t]);
 
   useEffect(() => {
     void loadInitialData();
@@ -439,20 +452,30 @@ export function ModelAliasEditPage() {
   }, [baselineTargets, optionByKey, selectedKeys, t]);
 
   const handleSave = useCallback(async () => {
-    const error = validateMappingSelection({
-      alias,
-      targets: selectedTargets,
-      existingAliasKeys,
-      editingAliasKey: isEditing ? toAliasKey(baselineAlias) : null,
-    });
+    const aliasLiteral = alias.trim();
+    const prevAliasKey = toAliasKey(baselineAlias || aliasLiteral);
+    // Identity targets (alias===modelId) cannot be persisted; only write real redirects.
+    const persistableSelected = filterPersistableMappingTargets(aliasLiteral, selectedTargets);
+    const persistableBaseline = filterPersistableMappingTargets(
+      baselineAlias || aliasLiteral,
+      baselineTargets
+    );
 
-    // Pure same-name selection: nothing to write (backend drops alias===name).
-    // Confirm as success so the auto-grouped list row is the source of truth.
-    if (error === 'identity_only') {
+    // 编辑时：若原本有可持久化目标，现在全部取消 → 必须写回清空，不能走 identity_only 假成功
+    const clearingConfigured =
+      isEditing && persistableBaseline.length > 0 && persistableSelected.length === 0;
+
+    // 只剩同名目标（无可持久化）：认领为手动渠道，不写 alias===name
+    const pureIdentity =
+      !clearingConfigured &&
+      selectedTargets.length > 0 &&
+      persistableSelected.length === 0;
+
+    if (pureIdentity) {
+      claimManualMapping(apiBase, aliasLiteral || baselineAlias);
       showNotification(
-        t('modelsPage.mapping.saveSuccessIdentityOnly', {
-          defaultValue:
-            '已确认同名模型联邦（无需改写别名，已自动出现在「已映射」列表）',
+        t('modelsPage.mapping.saveSuccessPromoted', {
+          defaultValue: '已转为手动映射渠道（同名目标无需改写别名）',
         }),
         'success'
       );
@@ -461,12 +484,36 @@ export function ModelAliasEditPage() {
       return;
     }
 
-    if (error) {
+    // 编辑时清空全部勾选：取消认领 + 清理后端配置
+    if (selectedTargets.length === 0) {
+      if (!isEditing) {
+        showNotification(
+          validationMessage('no_targets') ??
+            t('modelsPage.mapping.noTargets', { defaultValue: '请至少选择一个映射目标模型。' }),
+          'error'
+        );
+        return;
+      }
+      // fall through to write path with empty next plan
+    }
+
+    const error = validateMappingSelection({
+      alias: aliasLiteral || baselineAlias,
+      targets: selectedTargets.length ? selectedTargets : persistableBaseline,
+      existingAliasKeys,
+      editingAliasKey: isEditing ? toAliasKey(baselineAlias) : null,
+    });
+
+    // clearingConfigured 时 selected 可能为空，validate 会报 no_targets — 允许通过
+    if (error && !(clearingConfigured && (error === 'no_targets' || error === 'identity_only'))) {
       showNotification(validationMessage(error) ?? error, 'error');
       return;
     }
 
-    if (oauthUnsupported && selectedTargets.some((t) => t.source === 'oauth')) {
+    if (
+      oauthUnsupported &&
+      [...persistableSelected, ...persistableBaseline].some((t) => t.source === 'oauth')
+    ) {
       showNotification(
         t('modelsPage.mapping.oauthUnsupported', {
           defaultValue:
@@ -479,33 +526,27 @@ export function ModelAliasEditPage() {
 
     setSaving(true);
     try {
-      const aliasLiteral = alias.trim();
-      const prevAliasKey = toAliasKey(baselineAlias || aliasLiteral);
-      // Identity targets (alias===modelId) cannot be persisted; only write real redirects.
-      const persistableSelected = filterPersistableMappingTargets(aliasLiteral, selectedTargets);
-      const persistableBaseline = filterPersistableMappingTargets(
-        baselineAlias || aliasLiteral,
-        baselineTargets
-      );
-      const nextPlan = planAliasTargetAssignments(persistableSelected, aliasLiteral);
+      const nextPlan = planAliasTargetAssignments(persistableSelected, aliasLiteral || baselineAlias);
       const baselinePlan = planAliasTargetAssignments(
         persistableBaseline,
         baselineAlias || aliasLiteral
       );
 
-      // Channels that need write: any in baseline or next oauth assignments, plus rename cleanup
+      // 只清理后端真正有该 alias 的 channel，外加 next plan；避免 identity 展示目标触发 channel not found
       const oauthChannels = new Set<string>([
         ...nextPlan.oauthByChannel.keys(),
         ...baselinePlan.oauthByChannel.keys(),
+        ...collectConfiguredOauthChannelsForAlias(modelAlias, prevAliasKey),
         ...collectChannelsForAlias(modelAlias, prevAliasKey),
       ]);
 
       for (const channel of oauthChannels) {
         const entries = modelAlias[channel] ?? [];
-        // When renaming, strip old alias first conceptually via apply with next model ids for new alias
-        // applyOauthAliasTargetChanges matches by alias string — if renamed, clear old then set new.
+        if (!entries.length && !(nextPlan.oauthByChannel.get(channel) ?? []).length) {
+          continue;
+        }
         let working = entries;
-        if (isEditing && toAliasKey(baselineAlias) !== toAliasKey(aliasLiteral)) {
+        if (isEditing && toAliasKey(baselineAlias) !== toAliasKey(aliasLiteral || baselineAlias)) {
           working = applyOauthAliasTargetChanges({
             entries: working,
             alias: baselineAlias,
@@ -515,12 +556,13 @@ export function ModelAliasEditPage() {
         const nextModelIds = nextPlan.oauthByChannel.get(channel) ?? [];
         const nextEntries = applyOauthAliasTargetChanges({
           entries: working,
-          alias: aliasLiteral,
+          alias: aliasLiteral || baselineAlias,
           nextModelIds,
         });
         if (nextEntries.length) {
           await authFilesApi.saveOauthModelAlias(channel, nextEntries);
         } else if (entries.length) {
+          // 该 channel 上原本有条目才 delete；空 channel 不要调 delete
           await authFilesApi.deleteOauthModelAlias(channel);
         }
       }
@@ -528,23 +570,28 @@ export function ModelAliasEditPage() {
       const resourceIds = new Set<string>([
         ...nextPlan.apiKeyByResource.keys(),
         ...baselinePlan.apiKeyByResource.keys(),
+        ...collectConfiguredApiKeyResourceIdsForAlias(resources, prevAliasKey),
       ]);
 
       for (const resourceId of resourceIds) {
         const resource = resources.find((r) => r.id === resourceId);
         if (!resource) {
-          throw new Error(
-            t('modelsPage.mapping.resourceMissing', {
-              defaultValue: '未找到提供商条目（{{id}}），请刷新后重试。',
-              id: resourceId,
-            })
-          );
+          // 清理路径：资源已不存在可跳过；新增路径才报错
+          if ((nextPlan.apiKeyByResource.get(resourceId)?.modelIds ?? []).length) {
+            throw new Error(
+              t('modelsPage.mapping.resourceMissing', {
+                defaultValue: '未找到提供商条目（{{id}}），请刷新后重试。',
+                id: resourceId,
+              })
+            );
+          }
+          continue;
         }
         const rawModels = ((resource.raw as { models?: ModelAlias[] })?.models ??
           []) as ModelAlias[];
         const previousModelIds = baselinePlan.apiKeyByResource.get(resourceId)?.modelIds ?? [];
         let working = rawModels;
-        if (isEditing && toAliasKey(baselineAlias) !== toAliasKey(aliasLiteral)) {
+        if (isEditing && toAliasKey(baselineAlias) !== toAliasKey(aliasLiteral || baselineAlias)) {
           working = applyApiKeyModelAliasChanges({
             models: working,
             alias: baselineAlias,
@@ -556,7 +603,7 @@ export function ModelAliasEditPage() {
         const nextModelIds = nextPlan.apiKeyByResource.get(resourceId)?.modelIds ?? [];
         const nextModels = applyApiKeyModelAliasChanges({
           models: working,
-          alias: aliasLiteral,
+          alias: aliasLiteral || baselineAlias,
           nextModelIds,
           previousModelIds,
           previousAliasKey: prevAliasKey,
@@ -564,16 +611,28 @@ export function ModelAliasEditPage() {
         await updateApiKeyModels(resource, nextModels);
       }
 
+      if (selectedTargets.length === 0) {
+        // 清空全部目标 = 删除手动渠道 → 取消认领，模型回自动映射
+        unclaimManualMapping(apiBase, aliasLiteral || baselineAlias);
+      } else {
+        // 任意成功保存都认领为手动（含跨名 + 同名混合）
+        claimManualMapping(apiBase, aliasLiteral || baselineAlias);
+      }
+
       const skippedIdentity =
         selectedTargets.length - persistableSelected.length > 0 &&
         persistableSelected.length > 0;
       showNotification(
-        skippedIdentity
-          ? t('modelsPage.mapping.saveSuccessIdentitySkipped', {
-              defaultValue:
-                '映射已保存（与自定义名相同的目标无需单独配置，客户端会直接匹配原生模型）',
+        clearingConfigured || selectedTargets.length === 0
+          ? t('modelsPage.mapping.deleteSuccess', {
+              defaultValue: '手动映射已删除，同名模型已回到自动映射',
             })
-          : t('modelsPage.mapping.saveSuccess', { defaultValue: '映射已保存' }),
+          : skippedIdentity
+            ? t('modelsPage.mapping.saveSuccessIdentitySkipped', {
+                defaultValue:
+                  '映射已保存（与自定义名相同的目标无需单独配置，客户端会直接匹配原生模型）',
+              })
+            : t('modelsPage.mapping.saveSuccess', { defaultValue: '映射已保存' }),
         'success'
       );
       allowNextNavigation();
@@ -589,6 +648,7 @@ export function ModelAliasEditPage() {
   }, [
     alias,
     allowNextNavigation,
+    apiBase,
     baselineAlias,
     baselineTargets,
     existingAliasKeys,
