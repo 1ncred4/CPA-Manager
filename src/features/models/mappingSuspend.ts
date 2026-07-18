@@ -308,7 +308,7 @@ export function restoreOauthEntries(
   channel: string
 ): { next: OAuthModelAliasEntry[]; restored: number; skipped: number } {
   const channelKey = normalizeProviderKey(channel);
-  let working = [...entries];
+  const working = [...entries];
   let restored = 0;
   let skipped = 0;
 
