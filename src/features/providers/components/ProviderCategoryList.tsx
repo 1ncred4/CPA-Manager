@@ -92,7 +92,9 @@ function CategorySection({
 }) {
   return (
     <section className={styles.section} aria-label={label}>
-      <p className={styles.sectionLabel}>{label}</p>
+      <div className={styles.tabs}>
+        <span className={`${styles.tab} ${styles.tabActive}`}>{label}</span>
+      </div>
       <div className={styles.chipGrid}>{children}</div>
     </section>
   );
