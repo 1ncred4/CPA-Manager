@@ -90,6 +90,8 @@
   },
   "header": {
     "refresh_all": "刷新全部",
+    "main_repo": "主程序仓库",
+    "main_repo_update": "CLI Proxy API 有可用更新",
     "logout": "登出"
   },
   "connection": {

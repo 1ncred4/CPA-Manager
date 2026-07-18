@@ -252,7 +252,7 @@ export function VisualConfigEditor({
       setSearchOpen(false);
       handleModeChange('full');
       setActiveSectionId(entry.sectionId);
-      suppressScrollSpyUntilRef.current = Date.now() + 700;
+      suppressScrollSpyUntilRef.current = Date.now() + 900;
       // A new object instance defers scroll/highlight to the effect below, giving a
       // simple→full switch time to mount the DOM before we query for the field.
       setJumpRequest({ fieldId: entry.fieldId, sectionId: entry.sectionId });
@@ -512,28 +512,37 @@ export function VisualConfigEditor({
   const payloadValidationKey = hasPayloadValidationErrors ? 'payload-errors' : 'payload-ok';
 
   // Scroll-spy against the internal sections scroller so the left tab rail tracks the
-  // section currently visible at the top of the settings body.
+  // section the user is actually reading. Uses a mid-upper activation line (not the
+  // very top edge) so tall sections stay selected while their body is in view, and
+  // so the active tab doesn't lag one section behind during continuous scrolling.
   useEffect(() => {
     if (mode !== 'full' || !isCurrentLayer) return undefined;
     const scroller = sectionsScrollerRef.current;
     if (!scroller) return undefined;
 
+    let rafId = 0;
+
     const update = () => {
       if (Date.now() < suppressScrollSpyUntilRef.current) return;
+
+      const scrollerRect = scroller.getBoundingClientRect();
+      const maxScroll = scroller.scrollHeight - scroller.clientHeight;
 
       // When pinned near the bottom, a short final section (e.g. collapsed Payload)
       // can never push its top past the activation marker — force-select it so the
       // tab rail matches what the user is actually looking at.
-      const maxScroll = scroller.scrollHeight - scroller.clientHeight;
-      if (maxScroll > 0 && scroller.scrollTop >= maxScroll - 4) {
+      if (maxScroll > 0 && scroller.scrollTop >= maxScroll - 8) {
         const last = sections[sections.length - 1];
-        if (last) setActiveSectionId(last.id);
+        if (last) {
+          setActiveSectionId((prev) => (prev === last.id ? prev : last.id));
+        }
         return;
       }
 
-      // Activation line sits below the scroller's top padding so a section scrolled
-      // flush with the content start still qualifies as active.
-      const marker = scroller.getBoundingClientRect().top + 24;
+      // Activation line ~20% down the scroller (clamped). Sections whose top has
+      // crossed this line are candidates; the last such section is active.
+      const markerOffset = Math.max(56, Math.min(160, scroller.clientHeight * 0.22));
+      const marker = scrollerRect.top + markerOffset;
       let current: VisualSectionId | null = sections[0]?.id ?? null;
       for (const section of sections) {
         const el = sectionRefs.current[section.id];
@@ -541,15 +550,26 @@ export function VisualConfigEditor({
         if (el.getBoundingClientRect().top <= marker) current = section.id;
         else break;
       }
-      if (current) setActiveSectionId(current);
+      if (current) {
+        setActiveSectionId((prev) => (prev === current ? prev : current));
+      }
+    };
+
+    const onScrollOrResize = () => {
+      if (rafId) return;
+      rafId = window.requestAnimationFrame(() => {
+        rafId = 0;
+        update();
+      });
     };
 
     update();
-    scroller.addEventListener('scroll', update, { passive: true });
-    window.addEventListener('resize', update);
+    scroller.addEventListener('scroll', onScrollOrResize, { passive: true });
+    window.addEventListener('resize', onScrollOrResize);
     return () => {
-      scroller.removeEventListener('scroll', update);
-      window.removeEventListener('resize', update);
+      if (rafId) window.cancelAnimationFrame(rafId);
+      scroller.removeEventListener('scroll', onScrollOrResize);
+      window.removeEventListener('resize', onScrollOrResize);
     };
   }, [isCurrentLayer, mode, sections]);
 
@@ -583,7 +603,8 @@ export function VisualConfigEditor({
 
   const handleSectionJump = useCallback((sectionId: VisualSectionId) => {
     setActiveSectionId(sectionId);
-    suppressScrollSpyUntilRef.current = Date.now() + 700;
+    // Slightly longer than smooth-scroll so spy doesn't overwrite mid-animation.
+    suppressScrollSpyUntilRef.current = Date.now() + 900;
     const scroller = sectionsScrollerRef.current;
     const el = sectionRefs.current[sectionId];
     if (!el) return;
@@ -593,7 +614,9 @@ export function VisualConfigEditor({
     }
     const scrollerRect = scroller.getBoundingClientRect();
     const elRect = el.getBoundingClientRect();
-    const nextTop = scroller.scrollTop + (elRect.top - scrollerRect.top) - 8;
+    // Pin the section header just under the scroller top so it clearly "owns" the
+    // mid-upper activation marker used by scroll-spy.
+    const nextTop = scroller.scrollTop + (elRect.top - scrollerRect.top) - 12;
     scroller.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
   }, []);
 

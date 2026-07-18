@@ -90,6 +90,8 @@
   },
   "header": {
     "refresh_all": "Refresh All",
+    "main_repo": "Main Repository",
+    "main_repo_update": "CLI Proxy API update available",
     "logout": "Logout"
   },
   "connection": {

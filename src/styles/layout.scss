@@ -169,6 +169,25 @@
     right: var(--shell-gutter);
   }
 
+  .header-repo-action {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .header-update-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ef4444;
+    border: 1.5px solid color-mix(in srgb, var(--bg-primary) 88%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, #ef4444 35%, transparent);
+    pointer-events: none;
+  }
+
   .mobile-sidebar-actions .btn,
   .header-actions .btn {
     width: var(--floating-control-size);
@@ -457,6 +476,7 @@
   .sidebar-brand {
     display: flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 10px;
     min-height: 42px;
     padding: 4px 10px 14px;
@@ -467,22 +487,12 @@
   }
 
   .sidebar-brand-logo {
-    width: 34px;
-    height: 34px;
-    object-fit: contain;
-    border-radius: 8px;
-    box-shadow: none;
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--border-color) 55%, transparent);
     flex-shrink: 0;
-  }
-
-  .sidebar-brand-title {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--text-primary);
-    font-size: 18px;
-    font-weight: 800;
-    letter-spacing: 0;
-    white-space: nowrap;
   }
 
   .nav-section {

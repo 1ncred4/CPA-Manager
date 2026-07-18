@@ -13,7 +13,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { PageTransition } from '@/components/common/PageTransition';
 import { MainRoutes } from '@/router/MainRoutes';
-import { pluginsApi } from '@/services/api';
+import { pluginsApi, versionApi } from '@/services/api';
 import {
   IconSidebarConfig,
   IconSidebarDashboard,
@@ -26,7 +26,7 @@ import {
   IconSidebarSystem,
   IconChevronDown,
 } from '@/components/ui/icons';
-import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
+import catAvatar from '@/assets/cat-avatar.png';
 import {
   useAuthStore,
   useConfigStore,
@@ -41,8 +41,9 @@ import {
   type PluginResourceEntry,
 } from '@/features/plugins/pluginResources';
 import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
+import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER, MAIN_REPO_URL } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
+import { compareVersions } from '@/utils/version';
 import type { Theme } from '@/types';
 
 const sidebarIcons: Record<string, ReactNode> = {
@@ -238,6 +239,12 @@ const headerIcons = {
       <path d="M21 12H9" />
     </svg>
   ),
+  github: (
+    <svg {...headerIconProps}>
+      <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+      <path d="M9 18c-4.51 2-5-2-7-2" />
+    </svg>
+  ),
 };
 
 const THEME_CARDS: Array<{
@@ -300,6 +307,7 @@ export function MainLayout() {
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const apiBase = useAuthStore((state) => state.apiBase);
   const supportsPlugin = useAuthStore((state) => state.supportsPlugin);
+  const serverVersion = useAuthStore((state) => state.serverVersion);
 
   const fetchConfig = useConfigStore((state) => state.fetchConfig);
   const clearCache = useConfigStore((state) => state.clearCache);
@@ -317,13 +325,13 @@ export function MainLayout() {
   const [expandedPluginResourceIDs, setExpandedPluginResourceIDs] = useState<Set<string>>(
     () => new Set()
   );
+  const [hasApiUpdate, setHasApiUpdate] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
 
   const fullBrandName = 'CLI Proxy API Management Center';
-  const abbrBrandName = t('title.abbr');
   const isLogsPage = location.pathname.startsWith('/logs');
   const isConfigPage = location.pathname.startsWith('/config');
   const isPluginResourcePage = location.pathname.startsWith('/plugin-pages');
@@ -429,6 +437,36 @@ export function MainLayout() {
       // Ignore the initial failure; the login flow shows the user-facing prompt.
     });
   }, [fetchConfig]);
+
+  // 打开管理页时自动检查 CLI Proxy API 是否有新版本
+  useEffect(() => {
+    if (connectionStatus !== 'connected' || !serverVersion) {
+      setHasApiUpdate(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const checkLatestVersion = async () => {
+      try {
+        const data = await versionApi.checkLatest();
+        if (cancelled) return;
+        const latestRaw = data?.['latest-version'] ?? data?.latest_version ?? data?.latest ?? '';
+        const latest = typeof latestRaw === 'string' ? latestRaw : String(latestRaw ?? '');
+        setHasApiUpdate(compareVersions(latest, serverVersion) === 1);
+      } catch {
+        if (!cancelled) {
+          setHasApiUpdate(false);
+        }
+      }
+    };
+
+    void checkLatestVersion();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionStatus, serverVersion]);
 
   const loadPluginResources = useCallback(async () => {
     if (connectionStatus !== 'connected' || !supportsPlugin) {
@@ -791,6 +829,24 @@ export function MainLayout() {
           >
             {headerIcons.refresh}
           </Button>
+          <div className="header-repo-action">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.open(MAIN_REPO_URL, '_blank', 'noopener,noreferrer')}
+              title={t('header.main_repo')}
+              aria-label={t('header.main_repo')}
+            >
+              {headerIcons.github}
+            </Button>
+            {hasApiUpdate ? (
+              <span
+                className="header-update-badge"
+                title={t('header.main_repo_update')}
+                aria-label={t('header.main_repo_update')}
+              />
+            ) : null}
+          </div>
           <div className={`language-menu ${languageMenuOpen ? 'open' : ''}`} ref={languageMenuRef}>
             <Button
               variant="ghost"
@@ -918,8 +974,7 @@ export function MainLayout() {
           className={`sidebar ${sidebarOpen ? 'open' : ''} ${sidebarCollapsed ? 'collapsed' : ''}`}
         >
           <div className="sidebar-brand" title={fullBrandName}>
-            <img src={INLINE_LOGO_JPEG} alt="CPAMC logo" className="sidebar-brand-logo" />
-            {showSidebarLabels && <span className="sidebar-brand-title">{abbrBrandName}</span>}
+            <img src={catAvatar} alt={fullBrandName} className="sidebar-brand-logo" />
           </div>
 
           <div className="nav-section">

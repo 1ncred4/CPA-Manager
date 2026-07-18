@@ -90,6 +90,8 @@
   },
   "header": {
     "refresh_all": "Обновить всё",
+    "main_repo": "Основной репозиторий",
+    "main_repo_update": "Доступно обновление CLI Proxy API",
     "logout": "Выйти"
   },
   "connection": {

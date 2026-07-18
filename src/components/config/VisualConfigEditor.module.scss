@@ -556,21 +556,24 @@
 }
 
 // Left-side section navigation rail (top horizontal strip on mobile).
+// Note: overflow-y:auto forces overflow-x to compute as auto (CSS spec), so we CANNOT
+// rely on overflow:visible for scale — active "放大" must stay inside the content box
+// (left-origin scale + outer padding), otherwise the left edge clips.
 .tabBar {
   position: relative;
   z-index: 5;
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
-  width: 176px;
-  max-width: 40%;
+  width: 188px;
+  max-width: 42%;
   min-height: 0;
-  // Room for active-tab scale so it is not clipped against the border.
-  padding: 4px 10px 8px 2px;
+  // Outer gutter: left edge of tabs never sits flush against the workspace edge,
+  // and right gutter absorbs left-origin scale growth toward the sections pane.
+  padding: 10px 12px 10px 10px;
   background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
   border-right: 1px solid var(--border-color);
-  // Allow the scaled active pill to paint slightly past the rail edge.
-  overflow: visible;
+  overflow: hidden;
 
   @include mobile {
     width: auto;
@@ -578,18 +581,19 @@
     padding: 0 0 12px;
     border-right: none;
     border-bottom: 1px solid var(--border-color);
+    overflow: visible;
   }
 }
 
 .tabScroller {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   flex: 1 1 auto;
   min-height: 0;
   max-height: 100%;
-  // Padding absorbs scale growth so adjacent tabs aren't covered.
-  padding: 4px 4px 4px 2px;
+  // Extra horizontal padding keeps scaled active pills fully inside the scrollport.
+  padding: 2px 4px;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: none;
@@ -602,7 +606,7 @@
     flex-direction: row;
     flex: 0 0 auto;
     max-height: none;
-    padding: 0;
+    padding: 2px 2px;
     gap: 4px;
     overflow-x: auto;
     overflow-y: hidden;
@@ -615,19 +619,21 @@
   align-items: center;
   gap: 7px;
   flex: 0 0 auto;
+  box-sizing: border-box;
   width: 100%;
-  min-height: 34px;
-  padding: 6px 12px;
+  min-height: 36px;
+  padding: 7px 12px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 650;
-  line-height: 1.2;
+  line-height: 1.25;
   text-align: left;
   white-space: normal;
-  transform-origin: center center;
+  // Grow to the RIGHT only so the left edge never leaves the layout box / gets clipped.
+  transform-origin: left center;
   transition:
     background-color 0.15s ease,
     border-color 0.15s ease,
@@ -651,17 +657,18 @@
   @include mobile {
     width: auto;
     white-space: nowrap;
+    transform-origin: center center;
   }
 }
 
 // Keep selector specificity above `.tab:hover` so the active pill never regresses on hover.
 // Border must match the fill color (not transparent) — a transparent border lets the lighter
 // tabBar background show through and reads as a hairline on the left/right edges.
-// Active tab is also enlarged (放大) via scale + padding/font so selection is obvious at a glance.
+// Active tab is enlarged (放大) via left-origin scale + padding/font — left edge stays put.
 .tab.tabActive {
   z-index: 1;
-  min-height: 38px;
-  padding: 8px 12px;
+  min-height: 40px;
+  padding: 9px 12px;
   color: var(--primary-contrast, #ffffff);
   background: var(--text-primary);
   border-color: var(--text-primary);
@@ -669,7 +676,7 @@
   font-weight: 750;
   box-shadow: 0 2px 10px color-mix(in srgb, var(--text-primary) 18%, transparent);
   outline: none;
-  transform: scale(1.05);
+  transform: scale(1.04);
 
   &:hover,
   &:focus {
@@ -690,7 +697,7 @@
     min-height: 34px;
     padding: 6px 12px;
     font-size: 13px;
-    transform: scale(1.04);
+    transform: scale(1.03);
     box-shadow: none;
   }
 }
