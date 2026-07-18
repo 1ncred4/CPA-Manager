@@ -468,7 +468,7 @@ export function ProvidersWorkbenchPage() {
       <div className={styles.page}>
         <Skeleton height={120} />
         <div className={styles.layout}>
-          <Skeleton height={420} />
+          <Skeleton height={110} />
           <Skeleton height={420} />
         </div>
       </div>

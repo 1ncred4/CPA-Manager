@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getTypeLabel } from '@/features/authFiles/constants';
 import { PROVIDER_LOGOS, type ProviderBrandLogo } from '../brandLogos';
@@ -49,7 +50,7 @@ function CategoryLogo({ logo }: { logo?: ProviderBrandLogo }) {
   );
 }
 
-function CategoryItem({
+function CategoryChip({
   active,
   title,
   subtitle,
@@ -67,19 +68,33 @@ function CategoryItem({
   return (
     <button
       type="button"
-      className={`${styles.item} ${active ? styles.active : ''}`}
+      className={`${styles.chip} ${active ? styles.active : ''}`}
       onClick={onClick}
       aria-current={active ? 'page' : undefined}
+      title={`${title} · ${subtitle}`}
     >
-      <span className={styles.itemLeft}>
-        <CategoryLogo logo={logo} />
-        <span className={styles.itemText}>
-          <span className={styles.itemTitle}>{title}</span>
-          <span className={styles.itemSubtitle}>{subtitle}</span>
-        </span>
+      <CategoryLogo logo={logo} />
+      <span className={styles.chipText}>
+        <span className={styles.chipTitle}>{title}</span>
+        <span className={styles.chipMeta}>{subtitle}</span>
       </span>
       <span className={`${styles.badge} ${badge === 0 ? styles.badgeAmber : ''}`}>{badge}</span>
     </button>
+  );
+}
+
+function CategorySection({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className={styles.section} aria-label={label}>
+      <p className={styles.sectionLabel}>{label}</p>
+      <div className={styles.chipGrid}>{children}</div>
+    </section>
   );
 }
 
@@ -93,16 +108,15 @@ export function ProviderCategoryList({
   const activeKey = toCategoryKey(activeCategory);
 
   return (
-    <aside className={styles.aside}>
-      <p className={styles.eyebrow}>{t('providersPage.authGroups.apiKey')}</p>
-      <div className={styles.list}>
+    <nav className={styles.nav} aria-label={t('providersPage.categories.title')}>
+      <CategorySection label={t('providersPage.authGroups.apiKey')}>
         {apiKeyGroups.map((group) => {
           const category: ProviderCategoryId = { method: 'apiKey', brand: group.id };
           const active = toCategoryKey(category) === activeKey;
           const total = group.resources.length;
           const activeCount = group.resources.filter((r) => !r.disabled).length;
           return (
-            <CategoryItem
+            <CategoryChip
               key={toCategoryKey(category)}
               active={active}
               title={t(`providersPage.providerNames.${group.id as ProviderBrand}`)}
@@ -116,15 +130,14 @@ export function ProviderCategoryList({
             />
           );
         })}
-      </div>
+      </CategorySection>
 
-      <p className={`${styles.eyebrow} ${styles.groupGap}`}>{t('providersPage.authGroups.oauth')}</p>
-      <div className={styles.list}>
+      <CategorySection label={t('providersPage.authGroups.oauth')}>
         {oauthChannels.map((item) => {
           const category: ProviderCategoryId = { method: 'oauth', channel: item.channel };
           const active = toCategoryKey(category) === activeKey;
           return (
-            <CategoryItem
+            <CategoryChip
               key={toCategoryKey(category)}
               active={active}
               title={getTypeLabel(t, item.channel)}
@@ -138,7 +151,7 @@ export function ProviderCategoryList({
             />
           );
         })}
-      </div>
-    </aside>
+      </CategorySection>
+    </nav>
   );
 }
