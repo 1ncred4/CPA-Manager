@@ -9,8 +9,18 @@
 
 .pageHeader {
   display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $spacing-md;
+  flex-wrap: wrap;
+}
+
+.pageHeaderInfo {
+  display: flex;
   flex-direction: column;
   gap: $spacing-sm;
+  min-width: 0;
 }
 
 .pageTitle {
@@ -114,7 +124,8 @@
 .claudeGrid,
 .codexGrid,
 .kimiGrid,
-.xaiGrid {
+.xaiGrid,
+.unifiedGrid {
   display: grid;
   gap: $spacing-md;
   grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));

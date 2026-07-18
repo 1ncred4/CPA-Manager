@@ -1643,8 +1643,8 @@ const renderXaiItems = (
               h(
                 'span',
                 { className: styleMap.quotaPercent },
-                t('xai_quota.used_percent', {
-                  percent: formatXaiPercent(weeklyUsed),
+                t('xai_quota.remaining_percent', {
+                  percent: formatXaiPercent(weeklyRemaining),
                 })
               ),
               weeklyResetLabel !== '-'
@@ -1686,8 +1686,8 @@ const renderXaiItems = (
             h(
               'span',
               { className: styleMap.quotaPercent },
-              t('xai_quota.used_percent', {
-                percent: formatXaiPercent(used),
+              t('xai_quota.remaining_percent', {
+                percent: formatXaiPercent(remainingPercent),
               })
             )
           )

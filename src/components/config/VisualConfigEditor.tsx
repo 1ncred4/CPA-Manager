@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ComponentType,
+  type CSSProperties,
   type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -27,7 +28,6 @@ import {
   type IconProps,
 } from '@/components/ui/icons';
 import { ConfigSection } from '@/components/config/ConfigSection';
-import { useMediaQuery } from '@/hooks/useMediaQuery';
 import type {
   PayloadFilterRule,
   PayloadParamValidationErrorCode,
@@ -191,7 +191,6 @@ export function VisualConfigEditor({
   const { t } = useTranslation();
   const pageTransitionLayer = usePageTransitionLayer();
   const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.isCurrentLayer : true;
-  const isMobile = useMediaQuery('(max-width: 768px)');
   const routingStrategyLabelId = useId();
   const routingStrategyHintId = `${routingStrategyLabelId}-hint`;
   const disableImageGenerationLabelId = useId();
@@ -208,10 +207,10 @@ export function VisualConfigEditor({
   });
   const [activeSectionId, setActiveSectionId] = useState<VisualSectionId>('connectivity');
   const sectionRefs = useRef<Partial<Record<VisualSectionId, HTMLElement | null>>>({});
-  const mobileNavScrollerRef = useRef<HTMLDivElement | null>(null);
-  const mobileNavButtonRefs = useRef<Partial<Record<VisualSectionId, HTMLButtonElement | null>>>(
-    {}
-  );
+  const tabBarRef = useRef<HTMLDivElement | null>(null);
+  // Distance from viewport top to the sticky tab bar's bottom (= header + tab bar height).
+  // Used both as the scroll-spy detection line and as --config-tab-offset for scroll-margin-top.
+  const [tabOffset, setTabOffset] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   // Dropdown visibility is tracked separately from the query text so a jump can close the
   // results while leaving the typed text in the box for further editing.
@@ -270,8 +269,8 @@ export function VisualConfigEditor({
     const el = document.getElementById(configFieldDomId(targetFieldId));
     if (!el) {
       // Field not rendered right now (e.g. TLS cert while TLS is disabled) — fall back to
-      // bringing its section into view horizontally.
-      sectionRefs.current[sectionId]?.scrollIntoView({ block: 'nearest', inline: 'start' });
+      // bringing its section into view.
+      sectionRefs.current[sectionId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
 
@@ -287,15 +286,11 @@ export function VisualConfigEditor({
       highlightedElRef.current?.classList.remove(styles.fieldHighlightActive);
     }
 
-    // Full-mode sections live in a horizontal scroll-snap container (`scroll-snap-type: x
-    // mandatory`). A single field-level scrollIntoView() tries to do the horizontal section
-    // switch AND the vertical field scroll at once, which the snap pulls back / lands wrong.
-    // So: (1) switch to the target section horizontally and instantly (no smooth → no snap
-    // fight), then (2) next frame, scroll the field vertically with inline:'nearest' so it
-    // can't re-trigger horizontal snapping.
-    sectionRefs.current[sectionId]?.scrollIntoView({ block: 'nearest', inline: 'start' });
+    // Vertical layout: one scrollIntoView brings the field (and its section) into view.
+    // The field's scroll-margin-top (= --config-tab-offset) offsets the sticky header +
+    // tab bar. rAF lets the just-opened <details> lay out before we scroll.
     requestAnimationFrame(() => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       el.classList.add(styles.fieldHighlightActive);
     });
     highlightedElRef.current = el;
@@ -494,64 +489,81 @@ export function VisualConfigEditor({
       (field) => field !== 'port' && Boolean(validationErrors?.[field])
     ) || hasPayloadValidationErrors;
   const payloadValidationKey = hasPayloadValidationErrors ? 'payload-errors' : 'payload-ok';
-  const activeSection = sections.find((section) => section.id === activeSectionId) ?? sections[0];
 
+  // Measure the sticky tab bar's bottom (= fixed header + tab bar height) once full mode
+  // mounts, and re-measure on resize. This is both the scroll-spy detection line and the
+  // value exposed as --config-tab-offset for scroll-margin-top on sections / field anchors.
   useEffect(() => {
     if (mode !== 'full') return undefined;
-    if (!isCurrentLayer) return undefined;
-    if (typeof IntersectionObserver === 'undefined') return undefined;
+    const measure = () => {
+      const bar = tabBarRef.current;
+      if (!bar) return;
+      setTabOffset(Math.round(bar.getBoundingClientRect().bottom));
+    };
+    measure();
+    const onResize = () => measure();
+    window.addEventListener('resize', onResize);
+    const ro =
+      typeof ResizeObserver !== 'undefined' && tabBarRef.current
+        ? new ResizeObserver(measure)
+        : null;
+    if (ro && tabBarRef.current) ro.observe(tabBarRef.current);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      ro?.disconnect();
+    };
+  }, [mode]);
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visibleEntries = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((left, right) => right.intersectionRatio - left.intersectionRatio);
-
-        if (visibleEntries.length === 0) return;
-        setActiveSectionId(visibleEntries[0].target.id as VisualSectionId);
-      },
-      {
-        rootMargin: '-18% 0px -58% 0px',
-        threshold: [0.12, 0.3, 0.55],
-      }
-    );
-
-    for (const section of sections) {
-      const element = sectionRefs.current[section.id];
-      if (element) observer.observe(element);
-    }
-
-    return () => observer.disconnect();
-  }, [isCurrentLayer, mode, sections]);
-
+  // Scroll-spy: highlight the last section whose top has scrolled past the tab bar. A scroll
+  // listener (vs. IntersectionObserver) switches the tab the instant a section header crosses
+  // the tab bar, matching "scroll down -> next tab" better than IO's wide band.
   useEffect(() => {
-    if (mode !== 'full' || !isCurrentLayer || !isMobile) return;
-    const scroller = mobileNavScrollerRef.current;
-    const button = mobileNavButtonRefs.current[activeSectionId];
-    if (!scroller || !button) return;
+    if (mode !== 'full' || !isCurrentLayer) return undefined;
+    const bar = tabBarRef.current;
+    if (!bar) return undefined;
+    let scroller: HTMLElement | null = bar.parentElement;
+    while (scroller) {
+      const oy = getComputedStyle(scroller).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && scroller.scrollHeight > scroller.clientHeight) {
+        break;
+      }
+      scroller = scroller.parentElement;
+    }
+    const target: HTMLElement = scroller ?? document.documentElement;
+    const update = () => {
+      let current: VisualSectionId | null = sections[0]?.id ?? null;
+      for (const section of sections) {
+        const el = sectionRefs.current[section.id];
+        if (!el) continue;
+        if (el.getBoundingClientRect().top <= tabOffset + 1) current = section.id;
+        else break;
+      }
+      if (current) setActiveSectionId(current);
+    };
+    update();
+    target.addEventListener('scroll', update, { passive: true });
+    return () => target.removeEventListener('scroll', update);
+  }, [isCurrentLayer, mode, sections, tabOffset]);
 
-    const scrollerRect = scroller.getBoundingClientRect();
-    const buttonRect = button.getBoundingClientRect();
-    const centeredLeft =
-      scroller.scrollLeft +
-      (buttonRect.left - scrollerRect.left) -
-      (scroller.clientWidth - buttonRect.width) / 2;
-    const maxScrollLeft = Math.max(scroller.scrollWidth - scroller.clientWidth, 0);
-    const targetLeft = Math.min(Math.max(centeredLeft, 0), maxScrollLeft);
-
-    scroller.scrollTo({
-      left: targetLeft,
-      behavior: 'smooth',
-    });
-  }, [activeSectionId, isCurrentLayer, isMobile, mode]);
+  // Keep the active tab visible inside the horizontal tab scroller on narrow viewports.
+  useEffect(() => {
+    if (mode !== 'full') return;
+    const scroller = tabBarRef.current?.firstElementChild as HTMLElement | null;
+    if (!scroller) return;
+    const button = scroller.querySelector<HTMLElement>(`[data-tab-id="${activeSectionId}"]`);
+    if (!button) return;
+    const sRect = scroller.getBoundingClientRect();
+    const bRect = button.getBoundingClientRect();
+    if (bRect.left < sRect.left + 8) {
+      scroller.scrollBy({ left: bRect.left - sRect.left - 8, behavior: 'smooth' });
+    } else if (bRect.right > sRect.right - 8) {
+      scroller.scrollBy({ left: bRect.right - sRect.right + 8, behavior: 'smooth' });
+    }
+  }, [activeSectionId, mode]);
 
   const handleSectionJump = useCallback((sectionId: VisualSectionId) => {
     setActiveSectionId(sectionId);
-    sectionRefs.current[sectionId]?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'nearest',
-      inline: 'start',
-    });
+    sectionRefs.current[sectionId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, []);
 
   // Shared high-frequency field blocks — reused verbatim by both the simple view and full mode
@@ -654,44 +666,11 @@ export function VisualConfigEditor({
     </FieldAnchor>
   );
 
-  const navContent = (
-    <div className={styles.navList}>
-      {sections.map((section, index) => {
-        const Icon = section.icon;
-
-        return (
-          <button
-            key={section.id}
-            type="button"
-            className={`${styles.navButton} ${
-              activeSectionId === section.id ? styles.navButtonActive : ''
-            }`}
-            onClick={() => handleSectionJump(section.id)}
-          >
-            <span className={styles.navIndex}>{String(index + 1).padStart(2, '0')}</span>
-            <span className={styles.navMain}>
-              <span className={styles.navHeadingRow}>
-                <span className={styles.navLabelWrap}>
-                  <span className={styles.navIcon}>
-                    <Icon size={14} />
-                  </span>
-                  <span className={styles.navLabel}>{section.title}</span>
-                </span>
-                {section.errorCount > 0 ? (
-                  <span className={styles.navBadge} aria-hidden="true">
-                    {section.errorCount}
-                  </span>
-                ) : null}
-              </span>
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-
   return (
-    <div className={styles.visualEditor}>
+    <div
+      className={styles.visualEditor}
+      style={tabOffset > 0 ? ({ '--config-tab-offset': `${tabOffset}px` } as CSSProperties) : undefined}
+    >
       <div className={styles.overview}>
         <div className={styles.overviewHeader}>
           <div
@@ -718,9 +697,6 @@ export function VisualConfigEditor({
             </button>
           </div>
           <div className={styles.overviewMeta}>
-            {mode === 'full' && activeSection ? (
-              <span className={styles.overviewPill}>{activeSection.title}</span>
-            ) : null}
             {hasValidationIssues ? (
               <span className={`${styles.overviewPill} ${styles.overviewPillWarning}`}>
                 {t('config_management.visual.validation.validation_blocked')}
@@ -874,43 +850,39 @@ export function VisualConfigEditor({
         </div>
       ) : (
         <div className={styles.workspace}>
-          {isMobile ? (
-            <div className={styles.mobileSectionNav}>
-              <div
-                ref={mobileNavScrollerRef}
-                className={styles.mobileSectionNavScroller}
-                aria-label={t('config_management.visual.quick_jump', { defaultValue: '快速跳转' })}
-              >
-                {sections.map((section, index) => (
+          <div className={styles.tabBar} ref={tabBarRef}>
+            <div
+              className={styles.tabScroller}
+              role="tablist"
+              aria-label={t('config_management.visual.quick_jump', { defaultValue: '快速跳转' })}
+            >
+              {sections.map((section) => {
+                const Icon = section.icon;
+                const active = activeSectionId === section.id;
+                return (
                   <button
                     key={section.id}
-                    ref={(node) => {
-                      mobileNavButtonRefs.current[section.id] = node;
-                    }}
                     type="button"
-                    className={`${styles.mobileSectionNavButton} ${
-                      activeSectionId === section.id ? styles.mobileSectionNavButtonActive : ''
-                    }`}
+                    role="tab"
+                    aria-selected={active}
+                    data-tab-id={section.id}
+                    className={`${styles.tab} ${active ? styles.tabActive : ''}`}
                     onClick={() => handleSectionJump(section.id)}
                   >
-                    <span className={styles.mobileSectionNavIndex}>
-                      {String(index + 1).padStart(2, '0')}
+                    <span className={styles.tabIcon}>
+                      <Icon size={14} />
                     </span>
-                    <span className={styles.mobileSectionNavLabel}>{section.title}</span>
+                    <span className={styles.tabLabel}>{section.title}</span>
                     {section.errorCount > 0 ? (
-                      <span className={styles.mobileSectionNavBadge} aria-hidden="true">
+                      <span className={styles.tabBadge} aria-hidden="true">
                         {section.errorCount}
                       </span>
                     ) : null}
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
-          ) : null}
-
-          <aside className={styles.sidebar}>
-            <div className={styles.sidebarRail}>{navContent}</div>
-          </aside>
+          </div>
 
           <div className={styles.sections}>
             <ConfigSection

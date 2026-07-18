@@ -411,7 +411,7 @@
 .fieldAnchor {
   display: block;
   min-width: 0;
-  scroll-margin-top: calc(var(--header-height, 64px) + 16px);
+  scroll-margin-top: var(--config-tab-offset, calc(var(--header-height, 80px) + 56px));
 }
 
 .fieldHighlightActive {
@@ -525,61 +525,71 @@
   }
 }
 
-.mobileSectionNav {
-  display: none;
+.tabBar {
+  position: sticky;
+  top: var(--header-height, 80px);
+  z-index: 5;
+  padding: 8px 0;
+  background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
+  border-bottom: 1px solid var(--border-color);
+}
 
-  @include mobile {
-    position: sticky;
-    top: calc(var(--header-height, 64px) + 10px);
-    z-index: 4;
-    display: block;
-    margin-bottom: 4px;
-    background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+.tabScroller {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
   }
 }
 
-.mobileSectionNavScroller {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  overflow: visible;
-  padding: 2px 0 8px;
-}
-
-.mobileSectionNavButton {
+.tab {
   @include button-reset;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  min-width: 0;
-  width: 100%;
-  padding: 9px 10px;
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 6px 12px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  background: var(--bg-primary);
-  text-align: left;
-}
-
-.mobileSectionNavButtonActive {
-  border-color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
-
-.mobileSectionNavIndex {
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-}
-
-.mobileSectionNavLabel {
-  color: var(--text-primary);
+  background: transparent;
+  color: var(--text-secondary);
   font-size: 13px;
-  font-weight: 700;
-  line-height: 1.25;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+
+  &:hover {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  }
 }
 
-.mobileSectionNavBadge {
+.tabActive {
+  color: var(--bg-primary);
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+}
+
+.tabIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.tabLabel {
+  white-space: nowrap;
+}
+
+.tabBadge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -594,149 +604,19 @@
   font-weight: 700;
 }
 
-.sidebar {
-  position: sticky;
-  top: calc(var(--header-height, 64px) + 12px);
-  z-index: 5;
-  align-self: stretch;
-  min-width: 0;
+// Section navigation now lives in .tabBar above.
 
-  @include mobile {
-    display: none;
-  }
-}
-
-.sidebarRail {
-  padding: 0 0 12px;
-  border-bottom: 1px solid var(--border-color);
-  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
-}
-
-.navList {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  min-width: 0;
-
-  @include tablet {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.navButton {
-  @include button-reset;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 48px;
-  padding: 9px 11px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
-
-  &:hover {
-    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  }
-}
-
-.navButtonActive {
-  border-color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
-
-.navIndex {
-  min-width: 24px;
-  padding-top: 2px;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  flex: 0 0 auto;
-}
-
-.navMain {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
-.navHeadingRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.navLabelWrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-
-.navIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  color: var(--text-secondary);
-  flex: 0 0 auto;
-}
-
-.navLabel {
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.25;
-}
-
-.navBadge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 6px;
-  background: var(--warning-bg);
-  border: 1px solid var(--warning-border);
-  color: var(--warning-text);
-  font-size: 11px;
-  font-weight: 700;
-  flex: 0 0 auto;
-}
 
 .sections {
   display: flex;
-  gap: 0;
+  flex-direction: column;
+  gap: 14px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  align-items: stretch;
-  padding: 0 0 12px;
-  scroll-padding-left: 0;
-  scroll-snap-type: x mandatory;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
 
   @include mobile {
-    padding-bottom: 10px;
-  }
-
-  > * {
-    flex: 0 0 100%;
-    width: 100%;
-    max-width: 100%;
+    gap: 12px;
   }
 }
 

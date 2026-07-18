@@ -420,7 +420,7 @@
     "fetch_all": "Получить все",
     "weekly_limit": "Недельный лимит",
     "monthly_credits": "Месячные кредиты",
-    "used_percent": "Использовано {{percent}}",
+    "remaining_percent": "Осталось {{percent}}",
     "reset_at": "Сброс {{time}}",
     "product_usage": "Использование {{product}}",
     "plan_label": "План",
@@ -1050,7 +1050,9 @@
   "quota_management": {
     "title": "Управление квотами",
     "description": "Следите за статусом квот OAuth для учётных данных Antigravity, Codex, Claude, Kimi и xAI.",
-    "refresh_all_credentials": "Обновить все учётные данные"
+    "refresh_all_credentials": "Обновить все учётные данные",
+    "empty_title": "Нет учётных данных",
+    "empty_desc": "Нет файлов авторизации, соответствующих выбранному фильтру."
   },
   "plugin_management": {
     "title": "Управление плагинами",
