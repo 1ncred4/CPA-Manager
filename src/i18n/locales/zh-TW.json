@@ -1573,6 +1573,43 @@
       "toggleAria": "切換 {{model}}",
       "sectionApiKey": "API Key 供應商",
       "sectionOauth": "OAuth 供應商"
+    },
+    "mapping": {
+      "add": "新增對應",
+      "searchPlaceholder": "搜尋自訂名稱或目標模型",
+      "count": "{{shown}} / {{total}} 個對應",
+      "emptyTitle": "尚無模型對應",
+      "emptyDesc": "將自訂模型名對應到一個或多個已啟用的供應商模型。",
+      "noSearchResults": "沒有符合的對應",
+      "columns": {
+        "alias": "自訂模型名",
+        "targets": "對應目標",
+        "actions": "操作"
+      },
+      "createTitle": "新增模型對應",
+      "editTitle": "編輯模型對應",
+      "aliasLabel": "自訂模型名",
+      "aliasHint": "用戶端將使用此名稱請求；可對應到多個供應商模型。",
+      "aliasPlaceholder": "例如 custom.chat.plus",
+      "aliasRequired": "請填寫自訂模型名。",
+      "targetsLabel": "對應目標",
+      "targetsHint": "從目前已啟用的供應商模型中多選。",
+      "targetsEmpty": "尚無已啟用的模型可選",
+      "targetsEmptyDesc": "請先在「模型停用」中啟用模型，或在 AI 供應商中設定模型清單。",
+      "targetDisabledHint": "{{label}}（目前已停用）",
+      "disabledTarget": "已停用目標",
+      "save": "儲存",
+      "saveSuccess": "對應已儲存",
+      "saveFailed": "儲存對應失敗",
+      "deleteTitle": "刪除對應",
+      "deleteConfirm": "確定刪除自訂模型「{{alias}}」的全部對應目標？",
+      "deleteSuccess": "對應已刪除",
+      "duplicateAlias": "此自訂模型名已存在。",
+      "noTargets": "請至少選擇一個對應目標模型。",
+      "channelConflict": "同一 OAuth 渠道下只能對應一個模型到此名稱。",
+      "resourceConflict": "同一 API Key 項目下只能對應一個模型到此名稱。",
+      "oauthUnsupported": "目前 CPA 版本不支援 OAuth 模型對應。下方仍會顯示 API Key 側的模型別名對應。",
+      "oauthLoadFailed": "載入 OAuth 模型對應失敗。"
     }
   }
 }

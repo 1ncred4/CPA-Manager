@@ -1547,6 +1547,43 @@
       "toggleAria": "Toggle {{model}}",
       "sectionApiKey": "API Key providers",
       "sectionOauth": "OAuth providers"
+    },
+    "mapping": {
+      "add": "Add mapping",
+      "searchPlaceholder": "Search custom names or target models",
+      "count": "{{shown}} / {{total}} mappings",
+      "emptyTitle": "No model mappings",
+      "emptyDesc": "Map a custom model name to one or more enabled provider models.",
+      "noSearchResults": "No matching mappings",
+      "columns": {
+        "alias": "Custom model name",
+        "targets": "Targets",
+        "actions": "Actions"
+      },
+      "createTitle": "Add model mapping",
+      "editTitle": "Edit model mapping",
+      "aliasLabel": "Custom model name",
+      "aliasHint": "Clients will call this name; it can map to multiple provider models.",
+      "aliasPlaceholder": "e.g. custom.chat.plus",
+      "aliasRequired": "Enter a custom model name.",
+      "targetsLabel": "Mapping targets",
+      "targetsHint": "Multi-select from currently enabled provider models.",
+      "targetsEmpty": "No enabled models available",
+      "targetsEmptyDesc": "Enable models in the Disabled models tab, or configure models on AI Providers.",
+      "targetDisabledHint": "{{label}} (currently disabled)",
+      "disabledTarget": "Disabled target",
+      "save": "Save",
+      "saveSuccess": "Mapping saved",
+      "saveFailed": "Failed to save mapping",
+      "deleteTitle": "Delete mapping",
+      "deleteConfirm": "Delete all targets for custom model \"{{alias}}\"?",
+      "deleteSuccess": "Mapping deleted",
+      "duplicateAlias": "This custom model name already exists.",
+      "noTargets": "Select at least one target model.",
+      "channelConflict": "Only one model per OAuth channel can map to this name.",
+      "resourceConflict": "Only one model per API Key entry can map to this name.",
+      "oauthUnsupported": "This CPA version does not support OAuth model mapping. API Key aliases below can still be shown.",
+      "oauthLoadFailed": "Failed to load OAuth model mappings."
     }
   }
 }

@@ -1,125 +1,132 @@
+/**
+ * 联邦模型映射编辑：自定义名 → 多目标（OAuth + API Key）
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { AutocompleteInput } from '@/components/ui/AutocompleteInput';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { IconInfo, IconX } from '@/components/ui/icons';
 import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
 import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { useAuthStore, useNotificationStore } from '@/stores';
+import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
 import { authFilesApi } from '@/services/api';
 import {
-  buildOAuthProviderOptions,
+  getAuthFileIcon,
   getTypeLabel,
-  normalizeProviderKey,
+  type AuthFileModelItem,
 } from '@/features/authFiles/constants';
+import { PROVIDER_LOGOS } from '@/features/providers/brandLogos';
+import { useProviderWorkbench } from '@/features/providers/useProviderWorkbench';
+import type { ProviderResource } from '@/features/providers/types';
+import type { ModelAlias, OAuthModelAliasEntry } from '@/types';
+import { getErrorMessage } from '@/utils/helpers';
 import {
-  getModelAliasDraftSignature,
-  isOAuthEditorDirty,
-} from '@/features/authFiles/oauthEditorState';
-import type { AuthFileItem, OAuthModelAliasEntry } from '@/types';
-import { generateId, getErrorMessage } from '@/utils/helpers';
+  buildApiKeyAccessRows,
+  buildOAuthAccessRows,
+  collectOAuthChannels,
+  type ModelAccessRow,
+} from './modelAccessRows';
+import {
+  applyApiKeyModelAliasChanges,
+  applyOauthAliasTargetChanges,
+  buildEnabledMappingOptions,
+  buildFederatedMappingRows,
+  buildOauthDisplayNameMap,
+  collectChannelsForAlias,
+  getMappingDraftSignature,
+  mappingTargetKey,
+  planAliasTargetAssignments,
+  toAliasKey,
+  validateMappingSelection,
+  type MappingPickerOption,
+  type MappingTargetRef,
+  type MappingValidationError,
+} from './modelMapping';
+import { updateApiKeyModels } from './updateApiKeyModels';
 import styles from './ModelAliasEdit.module.scss';
 
-type AuthFileModelItem = { id: string; display_name?: string; type?: string; owned_by?: string };
-
 type LocationState = { fromModels?: boolean } | null;
-
-type OAuthModelMappingFormEntry = OAuthModelAliasEntry & { id: string };
-
-const buildEmptyMappingEntry = (): OAuthModelMappingFormEntry => ({
-  id: generateId(),
-  name: '',
-  alias: '',
-  fork: true,
-});
-
-const normalizeMappingEntries = (
-  entries?: OAuthModelAliasEntry[]
-): OAuthModelMappingFormEntry[] => {
-  if (!Array.isArray(entries) || entries.length === 0) {
-    return [buildEmptyMappingEntry()];
-  }
-  return entries.map((entry) => ({
-    id: generateId(),
-    name: entry.name ?? '',
-    alias: entry.alias ?? '',
-    fork: Boolean(entry.fork),
-    forceMapping: entry.forceMapping,
-  }));
-};
 
 export function ModelAliasEditPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { showConfirmation, showNotification } = useNotificationStore();
-  const connectionStatus = useAuthStore((state) => state.connectionStatus);
+  const [searchParams] = useSearchParams();
+  const { showNotification } = useNotificationStore();
+  const connectionStatus = useAuthStore((s) => s.connectionStatus);
+  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
+  const workbench = useProviderWorkbench();
   const disableControls = connectionStatus !== 'connected';
 
-  const [searchParams, setSearchParams] = useSearchParams();
-  const providerFromParams = searchParams.get('provider') ?? '';
-  const [initialProviderKey] = useState(() => normalizeProviderKey(providerFromParams));
+  const aliasFromParams = (searchParams.get('alias') ?? '').trim();
+  const isEditing = Boolean(aliasFromParams);
 
-  const [provider, setProvider] = useState(providerFromParams);
-  const [files, setFiles] = useState<AuthFileItem[]>([]);
-  const [excluded, setExcluded] = useState<Record<string, string[]>>({});
-  const [modelAlias, setModelAlias] = useState<Record<string, OAuthModelAliasEntry[]>>({});
   const [initialLoading, setInitialLoading] = useState(true);
   const [initialLoadError, setInitialLoadError] = useState<string | null>(null);
-  const [baselineReady, setBaselineReady] = useState(false);
-  const [modelAliasUnsupported, setModelAliasUnsupported] = useState(false);
-  const loadRequestRef = useRef(0);
+  const [oauthUnsupported, setOauthUnsupported] = useState(false);
+  const [modelAlias, setModelAlias] = useState<Record<string, OAuthModelAliasEntry[]>>({});
+  const [resources, setResources] = useState<ProviderResource[]>([]);
+  const [enabledOptions, setEnabledOptions] = useState<MappingPickerOption[]>([]);
+  const [existingAliasKeys, setExistingAliasKeys] = useState<string[]>([]);
+  const [baselineAlias, setBaselineAlias] = useState(aliasFromParams);
+  const [baselineTargets, setBaselineTargets] = useState<MappingTargetRef[]>([]);
 
-  const [mappings, setMappings] = useState<OAuthModelMappingFormEntry[]>([
-    buildEmptyMappingEntry(),
-  ]);
-  const [modelsList, setModelsList] = useState<AuthFileModelItem[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsError, setModelsError] = useState<'unsupported' | null>(null);
+  const [alias, setAlias] = useState(aliasFromParams);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [pickerSearch, setPickerSearch] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const loadRequestRef = useRef(0);
+  const workbenchRef = useRef(workbench);
   useEffect(() => {
-    setProvider(providerFromParams);
-  }, [providerFromParams]);
+    workbenchRef.current = workbench;
+  }, [workbench]);
 
-  const providerOptions = useMemo(() => {
-    const extraProviders = new Set<string>();
-    Object.keys(excluded).forEach((value) => extraProviders.add(value));
-    Object.keys(modelAlias).forEach((value) => extraProviders.add(value));
-    files.forEach((file) => {
-      if (typeof file.type === 'string') {
-        extraProviders.add(file.type);
+  const optionByKey = useMemo(() => {
+    const map = new Map<string, MappingPickerOption>();
+    enabledOptions.forEach((opt) => map.set(mappingTargetKey(opt), opt));
+    return map;
+  }, [enabledOptions]);
+
+  const selectedTargets: MappingTargetRef[] = useMemo(() => {
+    const result: MappingTargetRef[] = [];
+    selectedKeys.forEach((key) => {
+      const opt = optionByKey.get(key);
+      if (opt) {
+        result.push(
+          opt.source === 'oauth'
+            ? { source: 'oauth', channel: opt.channel, modelId: opt.modelId }
+            : {
+                source: 'apiKey',
+                resourceId: opt.resourceId,
+                brand: opt.brand,
+                modelId: opt.modelId,
+              }
+        );
+        return;
       }
-      if (typeof file.provider === 'string') {
-        extraProviders.add(file.provider);
-      }
+      // Keep baseline targets that are no longer in enabled options (disabled but still mapped)
+      const baseline = baselineTargets.find((t) => mappingTargetKey(t) === key);
+      if (baseline) result.push(baseline);
     });
+    return result;
+  }, [baselineTargets, optionByKey, selectedKeys]);
 
-    return buildOAuthProviderOptions(extraProviders);
-  }, [excluded, files, modelAlias]);
+  const baselineSignature = useMemo(
+    () => getMappingDraftSignature(baselineAlias, baselineTargets),
+    [baselineAlias, baselineTargets]
+  );
+  const currentSignature = useMemo(
+    () => getMappingDraftSignature(alias, selectedTargets),
+    [alias, selectedTargets]
+  );
+  const isDirty = baselineSignature !== currentSignature;
 
-  const resolvedProviderKey = useMemo(() => normalizeProviderKey(provider), [provider]);
-  const isEditing = useMemo(() => {
-    if (!resolvedProviderKey) return false;
-    return Object.prototype.hasOwnProperty.call(modelAlias, resolvedProviderKey);
-  }, [modelAlias, resolvedProviderKey]);
-  const baselineMappingsSignature = useMemo(
-    () => getModelAliasDraftSignature(modelAlias[resolvedProviderKey] ?? []),
-    [modelAlias, resolvedProviderKey]
-  );
-  const mappingsSignature = useMemo(() => getModelAliasDraftSignature(mappings), [mappings]);
-  const contentDirty = baselineMappingsSignature !== mappingsSignature;
-  const isDirty = isOAuthEditorDirty(
-    initialProviderKey,
-    provider,
-    baselineMappingsSignature,
-    mappingsSignature
-  );
   const unsavedChangesDialog = useMemo(
     () => ({
       title: t('common.unsaved_changes_title'),
@@ -129,23 +136,10 @@ export function ModelAliasEditPage() {
     }),
     [t]
   );
-  const { allowNextNavigation, allowNavigationTo } = useUnsavedChangesGuard({
+  const { allowNextNavigation } = useUnsavedChangesGuard({
     shouldBlock: isDirty,
     dialog: unsavedChangesDialog,
   });
-  const title = useMemo(() => t('oauth_model_alias.add_title'), [t]);
-  const headerHint = useMemo(() => {
-    if (!provider.trim()) {
-      return t('oauth_model_alias.provider_hint');
-    }
-    if (modelsLoading) {
-      return t('oauth_model_alias.model_source_loading');
-    }
-    if (modelsError === 'unsupported') {
-      return t('oauth_model_alias.model_source_unsupported');
-    }
-    return t('oauth_model_alias.model_source_loaded', { count: modelsList.length });
-  }, [modelsError, modelsList.length, modelsLoading, provider, t]);
 
   const handleBack = useCallback(() => {
     const state = location.state as LocationState;
@@ -160,9 +154,7 @@ export function ModelAliasEditPage() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        handleBack();
-      }
+      if (event.key === 'Escape') handleBack();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -172,43 +164,141 @@ export function ModelAliasEditPage() {
     const requestId = ++loadRequestRef.current;
     setInitialLoading(true);
     setInitialLoadError(null);
-    setBaselineReady(false);
-    setModelAliasUnsupported(false);
+    setOauthUnsupported(false);
 
     try {
-      const [filesResult, excludedResult, aliasResult] = await Promise.allSettled([
+      const [filesResult, aliasResult, excludedResult] = await Promise.allSettled([
         authFilesApi.list(),
-        authFilesApi.getOauthExcludedModels(),
         authFilesApi.getOauthModelAlias(),
+        authFilesApi.getOauthExcludedModels(),
+        workbenchRef.current.refetch(),
       ]);
 
       if (requestId !== loadRequestRef.current) return;
 
+      const fileTypes: string[] = [];
       if (filesResult.status === 'fulfilled') {
-        setFiles(filesResult.value?.files ?? []);
+        (filesResult.value?.files ?? []).forEach((file) => {
+          if (typeof file.type === 'string') fileTypes.push(file.type);
+          if (typeof file.provider === 'string') fileTypes.push(file.provider);
+        });
       }
 
-      if (excludedResult.status === 'fulfilled') {
-        setExcluded(excludedResult.value ?? {});
-      }
-
+      let nextAlias: Record<string, OAuthModelAliasEntry[]> = {};
       if (aliasResult.status === 'fulfilled') {
-        setModelAlias(aliasResult.value ?? {});
-        setBaselineReady(true);
-        return;
+        nextAlias = aliasResult.value ?? {};
+      } else {
+        const status =
+          typeof aliasResult.reason === 'object' &&
+          aliasResult.reason !== null &&
+          'status' in aliasResult.reason
+            ? (aliasResult.reason as { status?: unknown }).status
+            : undefined;
+        if (status === 404) {
+          setOauthUnsupported(true);
+        } else {
+          throw aliasResult.reason;
+        }
+      }
+      setModelAlias(nextAlias);
+
+      let nextExcluded: Record<string, string[]> = {};
+      if (excludedResult.status === 'fulfilled') {
+        nextExcluded = excludedResult.value ?? {};
       }
 
-      const err = aliasResult.reason;
-      const status =
-        typeof err === 'object' && err !== null && 'status' in err
-          ? (err as { status?: unknown }).status
-          : undefined;
+      const channels = collectOAuthChannels({ authFileTypes: fileTypes });
+      const definitionResults = await Promise.all(
+        channels.map(async (channel) => {
+          try {
+            const models = await authFilesApi.getModelDefinitions(channel);
+            return { channel, models };
+          } catch {
+            return { channel, models: [] as AuthFileModelItem[] };
+          }
+        })
+      );
+      if (requestId !== loadRequestRef.current) return;
 
-      if (status === 404) {
-        setModelAliasUnsupported(true);
-        return;
+      const oauthModels: Record<string, AuthFileModelItem[]> = {};
+      definitionResults.forEach(({ channel, models }) => {
+        if (models.length > 0) oauthModels[channel] = models;
+      });
+
+      const nextResources =
+        workbenchRef.current.snapshot?.groups.flatMap((g) => g.resources) ?? [];
+      setResources(nextResources);
+
+      const accessRows: ModelAccessRow[] = [];
+      Object.entries(oauthModels).forEach(([channel, models]) => {
+        accessRows.push(
+          ...buildOAuthAccessRows({
+            channel,
+            models,
+            excluded: nextExcluded,
+            providerLabel: getTypeLabel(t, channel),
+            iconSrc: getAuthFileIcon(channel, resolvedTheme),
+          })
+        );
+      });
+      nextResources.forEach((resource) => {
+        const logo = PROVIDER_LOGOS[resource.brand];
+        const iconSrc =
+          resolvedTheme === 'dark' && logo?.darkSrc ? logo.darkSrc : (logo?.src ?? null);
+        const brandLabel = t(`providersPage.providerNames.${resource.brand}`, {
+          defaultValue: resource.brand,
+        });
+        const entryLabel = resource.name ?? resource.identifier;
+        const providerLabel = entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
+        accessRows.push(...buildApiKeyAccessRows({ resource, providerLabel, iconSrc }));
+      });
+
+      const options = buildEnabledMappingOptions(accessRows);
+      setEnabledOptions(options);
+
+      const enabledKeySet = new Set(accessRows.filter((r) => r.enabled).map((r) => r.key));
+      const federated = buildFederatedMappingRows({
+        modelAlias: nextAlias,
+        resources: nextResources,
+        oauthDisplayNames: buildOauthDisplayNameMap(oauthModels),
+        enabledKeySet,
+        providerLabels: {
+          oauth: (channel) => getTypeLabel(t, channel),
+          apiKey: (resource) => {
+            const brandLabel = t(`providersPage.providerNames.${resource.brand}`, {
+              defaultValue: resource.brand,
+            });
+            const entryLabel = resource.name ?? resource.identifier;
+            return entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
+          },
+        },
+      });
+
+      setExistingAliasKeys(federated.map((row) => row.aliasKey));
+
+      if (aliasFromParams) {
+        const match = federated.find((row) => row.aliasKey === toAliasKey(aliasFromParams));
+        const resolvedAlias = match?.alias ?? aliasFromParams;
+        const targets: MappingTargetRef[] = (match?.targets ?? []).map((target) =>
+          target.source === 'oauth'
+            ? { source: 'oauth', channel: target.channel, modelId: target.modelId }
+            : {
+                source: 'apiKey',
+                resourceId: target.resourceId,
+                brand: target.brand,
+                modelId: target.modelId,
+              }
+        );
+        setAlias(resolvedAlias);
+        setBaselineAlias(resolvedAlias);
+        setBaselineTargets(targets);
+        setSelectedKeys(new Set(targets.map(mappingTargetKey)));
+      } else {
+        setAlias('');
+        setBaselineAlias('');
+        setBaselineTargets([]);
+        setSelectedKeys(new Set());
       }
-      setInitialLoadError(getErrorMessage(err));
     } catch (err: unknown) {
       if (requestId === loadRequestRef.current) {
         setInitialLoadError(getErrorMessage(err));
@@ -218,7 +308,7 @@ export function ModelAliasEditPage() {
         setInitialLoading(false);
       }
     }
-  }, []);
+  }, [aliasFromParams, resolvedTheme, t]);
 
   useEffect(() => {
     void loadInitialData();
@@ -227,171 +317,241 @@ export function ModelAliasEditPage() {
     };
   }, [loadInitialData]);
 
-  useEffect(() => {
-    if (!resolvedProviderKey) {
-      setMappings([buildEmptyMappingEntry()]);
-      return;
-    }
-    const existing = modelAlias[resolvedProviderKey] ?? [];
-    setMappings(normalizeMappingEntries(existing));
-  }, [modelAlias, resolvedProviderKey]);
+  const validationError = useMemo(
+    () =>
+      validateMappingSelection({
+        alias,
+        targets: selectedTargets,
+        existingAliasKeys,
+        editingAliasKey: isEditing ? toAliasKey(baselineAlias) : null,
+      }),
+    [alias, baselineAlias, existingAliasKeys, isEditing, selectedTargets]
+  );
 
-  useEffect(() => {
-    if (!resolvedProviderKey || modelAliasUnsupported) {
-      setModelsList([]);
-      setModelsError(null);
-      setModelsLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setModelsLoading(true);
-    setModelsError(null);
-
-    authFilesApi
-      .getModelDefinitions(resolvedProviderKey)
-      .then((models) => {
-        if (cancelled) return;
-        setModelsList(models);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const status =
-          typeof err === 'object' && err !== null && 'status' in err
-            ? (err as { status?: unknown }).status
-            : undefined;
-
-        if (status === 400 || status === 404) {
-          setModelsList([]);
-          setModelsError('unsupported');
-          return;
-        }
-
-        const errorMessage = err instanceof Error ? err.message : '';
-        showNotification(`${t('notification.load_failed')}: ${errorMessage}`, 'error');
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setModelsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [modelAliasUnsupported, resolvedProviderKey, showNotification, t]);
-
-  const applyProviderChange = useCallback(
-    (value: string) => {
-      setProvider(value);
-      const next = new URLSearchParams(searchParams);
-      const trimmed = value.trim();
-      if (trimmed) {
-        next.set('provider', trimmed);
-      } else {
-        next.delete('provider');
+  const validationMessage = useCallback(
+    (code: MappingValidationError | null): string | null => {
+      if (!code) return null;
+      switch (code) {
+        case 'alias_required':
+          return t('modelsPage.mapping.aliasRequired', { defaultValue: '请填写自定义模型名。' });
+        case 'no_targets':
+          return t('modelsPage.mapping.noTargets', {
+            defaultValue: '请至少选择一个映射目标模型。',
+          });
+        case 'duplicate_alias':
+          return t('modelsPage.mapping.duplicateAlias', {
+            defaultValue: '该自定义模型名已存在。',
+          });
+        case 'channel_conflict':
+          return t('modelsPage.mapping.channelConflict', {
+            defaultValue: '同一 OAuth 渠道下只能映射一个模型到此名称。',
+          });
+        case 'resource_conflict':
+          return t('modelsPage.mapping.resourceConflict', {
+            defaultValue: '同一 API Key 条目下只能映射一个模型到此名称。',
+          });
+        default:
+          return null;
       }
-      const nextSearch = next.toString();
-      allowNavigationTo(
-        `${location.pathname}${nextSearch ? `?${nextSearch}` : ''}${location.hash}`
-      );
-      setSearchParams(next, { replace: true });
     },
-    [allowNavigationTo, location.hash, location.pathname, searchParams, setSearchParams]
+    [t]
   );
 
-  const updateProvider = useCallback(
-    (value: string) => {
-      if (!contentDirty || normalizeProviderKey(value) === resolvedProviderKey) {
-        applyProviderChange(value);
-        return;
-      }
-      showConfirmation({
-        ...unsavedChangesDialog,
-        variant: 'danger',
-        onConfirm: () => applyProviderChange(value),
-      });
-    },
-    [applyProviderChange, contentDirty, resolvedProviderKey, showConfirmation, unsavedChangesDialog]
-  );
-
-  const updateMappingEntry = useCallback(
-    (index: number, field: keyof OAuthModelAliasEntry, value: string | boolean) => {
-      setMappings((prev) =>
-        prev.map((entry, idx) => (idx === index ? { ...entry, [field]: value } : entry))
-      );
-    },
-    []
-  );
-
-  const addMappingEntry = useCallback(() => {
-    setMappings((prev) => [...prev, buildEmptyMappingEntry()]);
-  }, []);
-
-  const removeMappingEntry = useCallback((index: number) => {
-    setMappings((prev) => {
-      const next = prev.filter((_, idx) => idx !== index);
-      return next.length ? next : [buildEmptyMappingEntry()];
+  const toggleTarget = (key: string, checked: boolean) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(key);
+      else next.delete(key);
+      return next;
     });
-  }, []);
+  };
+
+  const removeSelected = (key: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  };
+
+  const filteredOptions = useMemo(() => {
+    const q = pickerSearch.trim().toLowerCase();
+    if (!q) return enabledOptions;
+    return enabledOptions.filter((opt) => {
+      const hay = `${opt.displayName} ${opt.modelId} ${opt.providerLabel}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [enabledOptions, pickerSearch]);
+
+  const groupedOptions = useMemo(() => {
+    const groups = new Map<string, { label: string; items: MappingPickerOption[] }>();
+    filteredOptions.forEach((opt) => {
+      const existing = groups.get(opt.groupKey);
+      if (existing) {
+        existing.items.push(opt);
+      } else {
+        groups.set(opt.groupKey, { label: opt.providerLabel, items: [opt] });
+      }
+    });
+    return Array.from(groups.entries()).map(([key, value]) => ({ key, ...value }));
+  }, [filteredOptions]);
+
+  const selectedChips = useMemo(() => {
+    return Array.from(selectedKeys).map((key) => {
+      const opt = optionByKey.get(key);
+      if (opt) {
+        return {
+          key,
+          label: opt.displayName || opt.modelId,
+          providerLabel: opt.providerLabel,
+          iconSrc: opt.iconSrc,
+          disabled: false,
+        };
+      }
+      const baseline = baselineTargets.find((t) => mappingTargetKey(t) === key);
+      return {
+        key,
+        label: baseline?.modelId ?? key,
+        providerLabel:
+          baseline?.source === 'oauth'
+            ? getTypeLabel(t, baseline.channel)
+            : t('modelsPage.mapping.disabledTarget', { defaultValue: '已禁用目标' }),
+        iconSrc: null as string | null,
+        disabled: true,
+      };
+    });
+  }, [baselineTargets, optionByKey, selectedKeys, t]);
 
   const handleSave = useCallback(async () => {
-    const channel = normalizeProviderKey(provider);
-    if (!channel) {
-      showNotification(t('oauth_model_alias.provider_required'), 'error');
+    const error = validateMappingSelection({
+      alias,
+      targets: selectedTargets,
+      existingAliasKeys,
+      editingAliasKey: isEditing ? toAliasKey(baselineAlias) : null,
+    });
+    if (error) {
+      showNotification(validationMessage(error) ?? error, 'error');
       return;
     }
 
-    const seenAlias = new Set<string>();
-    let hasDuplicateAlias = false;
-    const normalized = mappings
-      .map((entry) => {
-        const name = String(entry.name ?? '').trim();
-        const alias = String(entry.alias ?? '').trim();
-        if (!name || !alias) return null;
-        const aliasKey = alias.toLowerCase();
-        if (seenAlias.has(aliasKey)) {
-          hasDuplicateAlias = true;
-          return null;
-        }
-        seenAlias.add(aliasKey);
-        const normalizedEntry: OAuthModelAliasEntry = { name, alias };
-        if (entry.fork) normalizedEntry.fork = true;
-        if (typeof entry.forceMapping === 'boolean') {
-          normalizedEntry.forceMapping = entry.forceMapping;
-        }
-        return normalizedEntry;
-      })
-      .filter(Boolean) as OAuthModelAliasEntry[];
-
-    if (hasDuplicateAlias) {
-      showNotification(t('oauth_model_alias.duplicate_alias'), 'error');
+    if (oauthUnsupported && selectedTargets.some((t) => t.source === 'oauth')) {
+      showNotification(
+        t('modelsPage.mapping.oauthUnsupported', {
+          defaultValue:
+            '当前 CPA 版本不支持 OAuth 模型映射。下方仍会展示 API Key 侧的模型别名映射。',
+        }),
+        'error'
+      );
       return;
     }
 
     setSaving(true);
     try {
-      if (normalized.length) {
-        await authFilesApi.saveOauthModelAlias(channel, normalized);
-      } else if (isEditing) {
-        await authFilesApi.deleteOauthModelAlias(channel);
+      const aliasLiteral = alias.trim();
+      const prevAliasKey = toAliasKey(baselineAlias || aliasLiteral);
+      const nextPlan = planAliasTargetAssignments(selectedTargets);
+      const baselinePlan = planAliasTargetAssignments(baselineTargets);
+
+      // Channels that need write: any in baseline or next oauth assignments, plus rename cleanup
+      const oauthChannels = new Set<string>([
+        ...nextPlan.oauthByChannel.keys(),
+        ...baselinePlan.oauthByChannel.keys(),
+        ...collectChannelsForAlias(modelAlias, prevAliasKey),
+      ]);
+
+      for (const channel of oauthChannels) {
+        const entries = modelAlias[channel] ?? [];
+        // When renaming, strip old alias first conceptually via apply with next model ids for new alias
+        // applyOauthAliasTargetChanges matches by alias string — if renamed, clear old then set new.
+        let working = entries;
+        if (isEditing && toAliasKey(baselineAlias) !== toAliasKey(aliasLiteral)) {
+          working = applyOauthAliasTargetChanges({
+            entries: working,
+            alias: baselineAlias,
+            nextModelIds: [],
+          });
+        }
+        const nextModelIds = nextPlan.oauthByChannel.get(channel) ?? [];
+        const nextEntries = applyOauthAliasTargetChanges({
+          entries: working,
+          alias: aliasLiteral,
+          nextModelIds,
+        });
+        if (nextEntries.length) {
+          await authFilesApi.saveOauthModelAlias(channel, nextEntries);
+        } else if (entries.length) {
+          await authFilesApi.deleteOauthModelAlias(channel);
+        }
       }
-      showNotification(t('oauth_model_alias.save_success'), 'success');
+
+      const resourceIds = new Set<string>([
+        ...nextPlan.apiKeyByResource.keys(),
+        ...baselinePlan.apiKeyByResource.keys(),
+      ]);
+
+      for (const resourceId of resourceIds) {
+        const resource = resources.find((r) => r.id === resourceId);
+        if (!resource) continue;
+        const rawModels = ((resource.raw as { models?: ModelAlias[] })?.models ??
+          []) as ModelAlias[];
+        const previousModelIds = baselinePlan.apiKeyByResource.get(resourceId)?.modelIds ?? [];
+        let working = rawModels;
+        if (isEditing && toAliasKey(baselineAlias) !== toAliasKey(aliasLiteral)) {
+          working = applyApiKeyModelAliasChanges({
+            models: working,
+            alias: baselineAlias,
+            nextModelIds: [],
+            previousModelIds,
+            previousAliasKey: prevAliasKey,
+          });
+        }
+        const nextModelIds = nextPlan.apiKeyByResource.get(resourceId)?.modelIds ?? [];
+        const nextModels = applyApiKeyModelAliasChanges({
+          models: working,
+          alias: aliasLiteral,
+          nextModelIds,
+          previousModelIds,
+          previousAliasKey: prevAliasKey,
+        });
+        await updateApiKeyModels(resource, nextModels);
+      }
+
+      showNotification(
+        t('modelsPage.mapping.saveSuccess', { defaultValue: '映射已保存' }),
+        'success'
+      );
       allowNextNavigation();
       handleBack();
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : '';
-      showNotification(`${t('oauth_model_alias.save_failed')}: ${errorMessage}`, 'error');
+      showNotification(
+        `${t('modelsPage.mapping.saveFailed', { defaultValue: '保存映射失败' })}: ${getErrorMessage(err)}`,
+        'error'
+      );
     } finally {
       setSaving(false);
     }
-  }, [allowNextNavigation, handleBack, isEditing, mappings, provider, showNotification, t]);
+  }, [
+    alias,
+    allowNextNavigation,
+    baselineAlias,
+    baselineTargets,
+    existingAliasKeys,
+    handleBack,
+    isEditing,
+    modelAlias,
+    oauthUnsupported,
+    resources,
+    selectedTargets,
+    showNotification,
+    t,
+    validationMessage,
+  ]);
 
-  const canSave =
-    !disableControls &&
-    !saving &&
-    baselineReady &&
-    !modelAliasUnsupported &&
-    initialLoadError === null;
+  const title = isEditing
+    ? t('modelsPage.mapping.editTitle', { defaultValue: '编辑模型映射' })
+    : t('modelsPage.mapping.createTitle', { defaultValue: '添加模型映射' });
+
+  const canSave = !disableControls && !saving && !initialLoading && initialLoadError === null;
 
   return (
     <SecondaryScreenShell
@@ -402,21 +562,14 @@ export function ModelAliasEditPage() {
       backAriaLabel={t('common.back')}
       contentClassName={styles.pageContent}
       rightAction={
-        <Button size="sm" onClick={handleSave} loading={saving} disabled={!canSave}>
-          {t('oauth_model_alias.save')}
+        <Button size="sm" onClick={() => void handleSave()} loading={saving} disabled={!canSave}>
+          {t('modelsPage.mapping.save', { defaultValue: '保存' })}
         </Button>
       }
       isLoading={initialLoading}
       loadingLabel={t('common.loading')}
     >
-      {modelAliasUnsupported ? (
-        <Card>
-          <EmptyState
-            title={t('oauth_model_alias.upgrade_required_title')}
-            description={t('oauth_model_alias.upgrade_required_desc')}
-          />
-        </Card>
-      ) : initialLoadError !== null ? (
+      {initialLoadError !== null ? (
         <Card>
           <EmptyState
             title={t('notification.refresh_failed')}
@@ -434,113 +587,156 @@ export function ModelAliasEditPage() {
             <div className={styles.settingsHeader}>
               <div className={styles.settingsHeaderTitle}>
                 <IconInfo size={16} />
-                <span>{t('oauth_model_alias.title')}</span>
+                <span>
+                  {t('modelsPage.mapping.aliasLabel', { defaultValue: '自定义模型名' })}
+                </span>
               </div>
-              <div className={styles.settingsHeaderHint}>{headerHint}</div>
+              <div className={styles.settingsHeaderHint}>
+                {t('modelsPage.mapping.aliasHint', {
+                  defaultValue: '客户端将使用此名称请求；可映射到多个提供商模型。',
+                })}
+              </div>
             </div>
-
             <div className={styles.settingsSection}>
-              <div className={styles.settingsRow}>
-                <div className={styles.settingsInfo}>
-                  <div className={styles.settingsLabel}>
-                    {t('oauth_model_alias.provider_label')}
-                  </div>
-                  <div className={styles.settingsDesc}>{t('oauth_model_alias.provider_hint')}</div>
-                </div>
-                <div className={styles.settingsControl}>
-                  <AutocompleteInput
-                    id="oauth-model-alias-provider"
-                    placeholder={t('oauth_model_alias.provider_placeholder')}
-                    value={provider}
-                    onChange={updateProvider}
-                    options={providerOptions}
-                    disabled={disableControls || saving}
-                    wrapperStyle={{ marginBottom: 0 }}
-                  />
-                </div>
-              </div>
-
-              {providerOptions.length > 0 && (
-                <div className={styles.tagList}>
-                  {providerOptions.map((option) => {
-                    const isActive =
-                      normalizeProviderKey(provider) === normalizeProviderKey(option);
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        className={`${styles.tag} ${isActive ? styles.tagActive : ''}`}
-                        onClick={() => updateProvider(option)}
-                        disabled={disableControls || saving}
-                      >
-                        {getTypeLabel(t, option)}
-                      </button>
-                    );
+              <input
+                className={`input ${styles.aliasInput}`}
+                value={alias}
+                onChange={(e) => setAlias(e.target.value)}
+                placeholder={t('modelsPage.mapping.aliasPlaceholder', {
+                  defaultValue: '例如 custom.chat.plus',
+                })}
+                disabled={disableControls || saving}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              {validationError && alias.trim() ? (
+                <div className={styles.validationHint}>{validationMessage(validationError)}</div>
+              ) : null}
+              {oauthUnsupported ? (
+                <div className={styles.validationHint}>
+                  {t('modelsPage.mapping.oauthUnsupported', {
+                    defaultValue:
+                      '当前 CPA 版本不支持 OAuth 模型映射。下方仍会展示 API Key 侧的模型别名映射。',
                   })}
                 </div>
-              )}
+              ) : null}
             </div>
           </Card>
 
           <Card className={styles.settingsCard}>
-            <div className={styles.mappingsHeader}>
-              <div className={styles.mappingsTitle}>{t('oauth_model_alias.alias_label')}</div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={addMappingEntry}
-                disabled={disableControls || saving || modelAliasUnsupported}
-              >
-                {t('oauth_model_alias.add_alias')}
-              </Button>
+            <div className={styles.settingsHeader}>
+              <div className={styles.settingsHeaderTitle}>
+                <span>
+                  {t('modelsPage.mapping.targetsLabel', { defaultValue: '映射目标' })}
+                </span>
+              </div>
+              <div className={styles.settingsHeaderHint}>
+                {t('modelsPage.mapping.targetsHint', {
+                  defaultValue: '从当前已启用的提供商模型中多选。',
+                })}
+              </div>
             </div>
 
-            <div className={styles.mappingsBody}>
-              {mappings.map((entry, index) => (
-                <div key={entry.id} className={styles.mappingRow}>
-                  <AutocompleteInput
-                    wrapperStyle={{ flex: 1, marginBottom: 0 }}
-                    placeholder={t('oauth_model_alias.alias_name_placeholder')}
-                    value={entry.name}
-                    onChange={(val) => updateMappingEntry(index, 'name', val)}
-                    disabled={disableControls || saving}
-                    options={modelsList.map((model) => ({
-                      value: model.id,
-                      label:
-                        model.display_name && model.display_name !== model.id
-                          ? model.display_name
-                          : undefined,
-                    }))}
-                  />
-                  <span className={styles.mappingSeparator}>→</span>
-                  <input
-                    className={`input ${styles.mappingAliasInput}`}
-                    placeholder={t('oauth_model_alias.alias_placeholder')}
-                    value={entry.alias}
-                    onChange={(e) => updateMappingEntry(index, 'alias', e.target.value)}
-                    disabled={disableControls || saving}
-                  />
-                  <div className={styles.mappingFork}>
-                    <ToggleSwitch
-                      label={t('oauth_model_alias.alias_fork_label')}
-                      labelPosition="left"
-                      checked={Boolean(entry.fork)}
-                      onChange={(value) => updateMappingEntry(index, 'fork', value)}
-                      disabled={disableControls || saving}
-                    />
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removeMappingEntry(index)}
-                    disabled={disableControls || saving || mappings.length <= 1}
-                    title={t('common.delete')}
-                    aria-label={t('common.delete')}
-                  >
-                    <IconX size={14} />
-                  </Button>
+            {selectedChips.length > 0 ? (
+              <div className={styles.selectedSection}>
+                <div className={styles.tagList}>
+                  {selectedChips.map((chip) => (
+                    <span
+                      key={chip.key}
+                      className={`${styles.selectedTag} ${chip.disabled ? styles.selectedTagDisabled : ''}`}
+                      title={
+                        chip.disabled
+                          ? t('modelsPage.mapping.targetDisabledHint', {
+                              defaultValue: '{{label}}（当前已禁用）',
+                              label: `${chip.providerLabel} · ${chip.label}`,
+                            })
+                          : `${chip.providerLabel} · ${chip.label}`
+                      }
+                    >
+                      {chip.iconSrc ? (
+                        <img src={chip.iconSrc} alt="" className={styles.tagIcon} />
+                      ) : null}
+                      <span className={styles.tagText}>{chip.label}</span>
+                      <span className={styles.tagProvider}>{chip.providerLabel}</span>
+                      <button
+                        type="button"
+                        className={styles.tagRemove}
+                        onClick={() => removeSelected(chip.key)}
+                        disabled={disableControls || saving}
+                        aria-label={t('common.delete')}
+                      >
+                        <IconX size={12} />
+                      </button>
+                    </span>
+                  ))}
                 </div>
-              ))}
+              </div>
+            ) : null}
+
+            <div className={styles.pickerSection}>
+              <input
+                className={styles.pickerSearch}
+                type="search"
+                value={pickerSearch}
+                onChange={(e) => setPickerSearch(e.target.value)}
+                placeholder={t('modelsPage.mapping.searchPlaceholder', {
+                  defaultValue: '搜索自定义名称或目标模型',
+                })}
+                disabled={disableControls || saving}
+              />
+
+              {enabledOptions.length === 0 ? (
+                <EmptyState
+                  title={t('modelsPage.mapping.targetsEmpty', {
+                    defaultValue: '暂无已启用的模型可选',
+                  })}
+                  description={t('modelsPage.mapping.targetsEmptyDesc', {
+                    defaultValue: '请先在「模型禁用」中启用模型，或在 AI 提供商中配置模型列表。',
+                  })}
+                />
+              ) : filteredOptions.length === 0 ? (
+                <EmptyState
+                  title={t('modelsPage.mapping.noSearchResults', {
+                    defaultValue: '没有匹配的映射',
+                  })}
+                />
+              ) : (
+                <div className={styles.pickerGroups}>
+                  {groupedOptions.map((group) => (
+                    <div key={group.key} className={styles.pickerGroup}>
+                      <div className={styles.pickerGroupTitle}>{group.label}</div>
+                      <div className={styles.pickerItems}>
+                        {group.items.map((opt) => {
+                          const key = mappingTargetKey(opt);
+                          const checked = selectedKeys.has(key);
+                          return (
+                            <div key={key} className={styles.pickerItem}>
+                              <SelectionCheckbox
+                                checked={checked}
+                                onChange={(value) => toggleTarget(key, value)}
+                                disabled={disableControls || saving}
+                                label={
+                                  <span className={styles.pickerLabel}>
+                                    {opt.iconSrc ? (
+                                      <img src={opt.iconSrc} alt="" className={styles.tagIcon} />
+                                    ) : null}
+                                    <span className={styles.pickerName}>
+                                      {opt.displayName || opt.modelId}
+                                    </span>
+                                    {opt.displayName && opt.displayName !== opt.modelId ? (
+                                      <span className={styles.pickerId}>{opt.modelId}</span>
+                                    ) : null}
+                                  </span>
+                                }
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </Card>
         </>

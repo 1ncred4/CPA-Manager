@@ -1547,6 +1547,43 @@
       "toggleAria": "切换 {{model}}",
       "sectionApiKey": "API Key 提供商",
       "sectionOauth": "OAuth 提供商"
+    },
+    "mapping": {
+      "add": "添加映射",
+      "searchPlaceholder": "搜索自定义名称或目标模型",
+      "count": "{{shown}} / {{total}} 个映射",
+      "emptyTitle": "暂无模型映射",
+      "emptyDesc": "将自定义模型名映射到一个或多个已启用的提供商模型。",
+      "noSearchResults": "没有匹配的映射",
+      "columns": {
+        "alias": "自定义模型名",
+        "targets": "映射目标",
+        "actions": "操作"
+      },
+      "createTitle": "添加模型映射",
+      "editTitle": "编辑模型映射",
+      "aliasLabel": "自定义模型名",
+      "aliasHint": "客户端将使用此名称请求；可映射到多个提供商模型。",
+      "aliasPlaceholder": "例如 custom.chat.plus",
+      "aliasRequired": "请填写自定义模型名。",
+      "targetsLabel": "映射目标",
+      "targetsHint": "从当前已启用的提供商模型中多选。",
+      "targetsEmpty": "暂无已启用的模型可选",
+      "targetsEmptyDesc": "请先在「模型禁用」中启用模型，或在 AI 提供商中配置模型列表。",
+      "targetDisabledHint": "{{label}}（当前已禁用）",
+      "disabledTarget": "已禁用目标",
+      "save": "保存",
+      "saveSuccess": "映射已保存",
+      "saveFailed": "保存映射失败",
+      "deleteTitle": "删除映射",
+      "deleteConfirm": "确定删除自定义模型「{{alias}}」的全部映射目标？",
+      "deleteSuccess": "映射已删除",
+      "duplicateAlias": "该自定义模型名已存在。",
+      "noTargets": "请至少选择一个映射目标模型。",
+      "channelConflict": "同一 OAuth 渠道下只能映射一个模型到此名称。",
+      "resourceConflict": "同一 API Key 条目下只能映射一个模型到此名称。",
+      "oauthUnsupported": "当前 CPA 版本不支持 OAuth 模型映射。下方仍会展示 API Key 侧的模型别名映射。",
+      "oauthLoadFailed": "加载 OAuth 模型映射失败。"
     }
   }
 }
