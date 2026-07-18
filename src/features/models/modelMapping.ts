@@ -255,8 +255,8 @@ export function collectMappedTargetKeys(rows: FederatedMappingRow[]): Set<string
 }
 
 /**
- * Models that exist in the access catalog but are not targets of any custom alias.
- * Includes disabled models so operators can see full coverage.
+ * Enabled models that exist in the access catalog but are not targets of any custom alias.
+ * Disabled models are excluded (they cannot be mapped until re-enabled).
  */
 export function buildUnmappedModels(
   accessRows: ModelAccessRow[],
@@ -266,6 +266,7 @@ export function buildUnmappedModels(
   const seen = new Set<string>();
 
   accessRows.forEach((row) => {
+    if (!row.enabled) return;
     const ref = accessRowToTargetRef(row);
     if (!ref) return;
     const key = mappingTargetKey(ref);

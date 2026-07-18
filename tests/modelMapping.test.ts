@@ -361,7 +361,7 @@ describe('modelMapping', () => {
     expect(plan.apiKeyByResource.get('r1')?.modelIds).toEqual(['c']);
   });
 
-  test('buildUnmappedModels excludes mapped targets and keeps disabled models', () => {
+  test('buildUnmappedModels excludes mapped targets and disabled models', () => {
     const accessRows: ModelAccessRow[] = [
       {
         key: 'oauth:claude:a',
@@ -423,8 +423,9 @@ describe('modelMapping', () => {
     ]);
 
     const unmapped = buildUnmappedModels(accessRows, mapped);
-    expect(unmapped.map((row) => row.modelId).sort()).toEqual(['claude-b', 'gpt-x']);
-    expect(unmapped.find((row) => row.modelId === 'claude-b')?.enabled).toBe(false);
+    // claude-a is mapped; claude-b is disabled; only gpt-x remains.
+    expect(unmapped.map((row) => row.modelId)).toEqual(['gpt-x']);
+    expect(unmapped.every((row) => row.enabled)).toBe(true);
     expect(filterUnmappedModels(unmapped, 'gpt')).toHaveLength(1);
     expect(filterUnmappedModels(unmapped, 'zzz')).toHaveLength(0);
   });

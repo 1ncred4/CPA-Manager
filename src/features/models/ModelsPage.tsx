@@ -27,7 +27,7 @@ export function ModelsPage() {
 
   const tabParam = searchParams.get('tab');
   const [tab, setTabState] = useState<ModelsTab>(() =>
-    isModelsTab(tabParam) ? tabParam : 'disabled'
+    isModelsTab(tabParam) ? tabParam : 'mapping'
   );
 
   useEffect(() => {
@@ -80,31 +80,31 @@ export function ModelsPage() {
           <button
             type="button"
             role="tab"
-            aria-selected={tab === 'disabled'}
-            className={`${styles.tab} ${tab === 'disabled' ? styles.tabActive : ''}`}
-            onClick={() => setTab('disabled')}
-          >
-            {t('modelsPage.tabs.disabled', { defaultValue: '模型禁用' })}
-          </button>
-          <button
-            type="button"
-            role="tab"
             aria-selected={tab === 'mapping'}
             className={`${styles.tab} ${tab === 'mapping' ? styles.tabActive : ''}`}
             onClick={() => setTab('mapping')}
           >
             {t('modelsPage.tabs.mapping', { defaultValue: '模型映射' })}
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'disabled'}
+            className={`${styles.tab} ${tab === 'disabled' ? styles.tabActive : ''}`}
+            onClick={() => setTab('disabled')}
+          >
+            {t('modelsPage.tabs.disabled', { defaultValue: '模型禁用' })}
+          </button>
         </div>
       </div>
 
-      {tab === 'disabled' ? (
+      {tab === 'mapping' ? (
         <div className={styles.stack}>
-          <ModelAccessList list={modelAccess} />
+          <ModelMappingList list={modelMapping} />
         </div>
       ) : (
         <div className={styles.stack}>
-          <ModelMappingList list={modelMapping} />
+          <ModelAccessList list={modelAccess} />
         </div>
       )}
     </div>
