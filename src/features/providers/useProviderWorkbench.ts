@@ -73,20 +73,20 @@ const parseThinkingJson = (value: string | undefined): Record<string, unknown> |
   return parsed as Record<string, unknown>;
 };
 
-const buildExcludedModels = (
-  textValue: string,
-  disabled: boolean,
-  brand: ProviderBrand
+/**
+ * Per-model exclusions are owned by Model Management.
+ * Provider form only owns the entry-level disable flag (`*`).
+ * Always preserve existing non-`*` rules when saving from the provider sheet.
+ */
+const mergeExcludedModels = (
+  existing: string[] | undefined,
+  disabled: boolean
 ): string[] | undefined => {
-  const list = parseTextList(textValue);
-  const filtered = list.filter((v) => v !== '*');
-  if (brand === 'openaiCompatibility') {
-    return filtered.length ? filtered : undefined;
-  }
+  const preserved = withoutDisableAllModelsRule(existing);
   if (disabled) {
-    return withDisableAllModelsRule(filtered);
+    return withDisableAllModelsRule(preserved);
   }
-  return filtered.length ? filtered : undefined;
+  return preserved.length ? preserved : undefined;
 };
 
 /**
@@ -193,7 +193,7 @@ const buildProviderKeyConfig = (
 ): ProviderKeyConfig | GeminiKeyConfig => {
   const headers = headersFromEntries(input.headers);
   const models = buildModelAliases(input.models, false, existing?.models);
-  const excluded = buildExcludedModels(input.excludedModelsText, input.disabled, brand);
+  const excluded = mergeExcludedModels(existing?.excludedModels, input.disabled);
   const apiKeyChanged = input.apiKey.trim().length > 0;
   const next: ProviderKeyConfig = {
     apiKey: apiKeyChanged ? input.apiKey.trim() : (existing?.apiKey ?? ''),

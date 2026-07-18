@@ -1410,6 +1410,7 @@
     "form": {
       "createEyebrow": "新增",
       "editEyebrow": "編輯",
+      "connectionSection": "連線資訊",
       "name": "名稱",
       "apiKey": "API 金鑰",
       "apiKeyCreatePlaceholder": "輸入 API 金鑰",

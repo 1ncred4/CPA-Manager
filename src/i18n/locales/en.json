@@ -1384,6 +1384,7 @@
     "form": {
       "createEyebrow": "New",
       "editEyebrow": "Edit",
+      "connectionSection": "Connection",
       "name": "Name",
       "apiKey": "API key",
       "apiKeyCreatePlaceholder": "Enter API key",

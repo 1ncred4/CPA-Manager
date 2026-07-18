@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  IconChevronDown,
   IconEye,
   IconEyeOff,
   IconLoader2,
@@ -17,9 +16,6 @@ import styles from './sharedForm.module.scss';
 const COLLAPSED_LIMIT = 10;
 
 const idleStatus: ConnectivityStatus = { state: 'idle' as ConnectivityState, message: '' };
-
-const isBlankEntry = (entry: ApiKeyEntryInput): boolean =>
-  !entry.apiKey.trim() && !entry.existingApiKey?.trim();
 
 interface ApiKeyEntriesEditorProps {
   entries: ApiKeyEntryInput[];
@@ -48,9 +44,6 @@ export function ApiKeyEntriesEditor({
   onTestAll,
 }: ApiKeyEntriesEditorProps) {
   const { t } = useTranslation();
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(() =>
-    entries.length === 1 && isBlankEntry(entries[0]) ? 0 : null
-  );
   const [showPasswords, setShowPasswords] = useState<Set<number>>(new Set());
   const [showAll, setShowAll] = useState(false);
 
@@ -67,8 +60,10 @@ export function ApiKeyEntriesEditor({
   };
 
   const handleAdd = () => {
-    const idx = onAdd();
-    setExpandedIdx(idx);
+    if (!showAll && entries.length >= COLLAPSED_LIMIT) {
+      setShowAll(true);
+    }
+    onAdd();
   };
 
   const handleRemove = (removeIdx: number) => {
@@ -83,10 +78,6 @@ export function ApiKeyEntriesEditor({
         }
       });
       return next;
-    });
-    setExpandedIdx((prev) => {
-      if (prev === null || prev === removeIdx) return null;
-      return prev > removeIdx ? prev - 1 : prev;
     });
     onRemove(removeIdx);
   };
@@ -118,29 +109,27 @@ export function ApiKeyEntriesEditor({
       </div>
       {visible.map(({ entry, idx }) => {
         const status = statuses[idx] ?? idleStatus;
-        const expanded = expandedIdx === idx;
         const summaryKey = entry.apiKey.trim() || entry.existingApiKey?.trim() || '';
         return (
           <div key={idx} className={styles.entryCard}>
             <div className={styles.entryCardHeader}>
-              <button
-                type="button"
-                className={styles.entryCardToggle}
-                aria-expanded={expanded}
-                onClick={() => setExpandedIdx(expanded ? null : idx)}
-              >
+              <div className={styles.entryCardTitle}>
                 <span>{t('providersPage.form.apiKeyEntry', { index: idx + 1 })}</span>
-                <span className={styles.entrySummary}>
-                  {entry.proxyUrl.trim() ? (
-                    <span className={styles.entryBadge} title={entry.proxyUrl}>
-                      {t('providersPage.form.proxyBadge')}
-                    </span>
-                  ) : null}
-                  <span className={styles.entrySummaryKey}>
-                    {summaryKey ? maskApiKey(summaryKey) : t('providersPage.status.notConfigured')}
+                {summaryKey ? (
+                  <span className={styles.entrySummaryKey} title={summaryKey}>
+                    {maskApiKey(summaryKey)}
                   </span>
-                </span>
-              </button>
+                ) : (
+                  <span className={styles.entrySummaryMuted}>
+                    {t('providersPage.status.notConfigured')}
+                  </span>
+                )}
+                {entry.proxyUrl.trim() ? (
+                  <span className={styles.entryBadge} title={entry.proxyUrl}>
+                    {t('providersPage.form.proxyBadge')}
+                  </span>
+                ) : null}
+              </div>
               <div className={styles.entryCardHeaderRight}>
                 <ConnectivityStatusIcon state={status.state} />
                 <button
@@ -158,23 +147,6 @@ export function ApiKeyEntriesEditor({
                 </button>
                 <button
                   type="button"
-                  className={styles.entryCardIconBtn}
-                  onClick={() => setExpandedIdx(expanded ? null : idx)}
-                  title={expanded ? t('common.collapse') : t('common.expand')}
-                  aria-label={expanded ? t('common.collapse') : t('common.expand')}
-                >
-                  <IconChevronDown
-                    className={[
-                      styles.entryCardChevron,
-                      expanded ? styles.entryCardChevronOpen : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                    size={14}
-                  />
-                </button>
-                <button
-                  type="button"
                   className={styles.removeBtn}
                   disabled={mutating || removeDisabled}
                   onClick={() => handleRemove(idx)}
@@ -186,59 +158,57 @@ export function ApiKeyEntriesEditor({
             {status.state === 'error' ? (
               <div className={styles.connectivityError}>{status.message}</div>
             ) : null}
-            {expanded ? (
-              <div className={styles.entryCardBody}>
-                <div className={styles.field}>
-                  <label className={styles.label}>{t('providersPage.form.apiKey')}</label>
-                  <div className={styles.passwordField}>
-                    <input
-                      className={styles.passwordInput}
-                      type={showPasswords.has(idx) ? 'text' : 'password'}
-                      value={entry.apiKey}
-                      onChange={(e) => onUpdate(idx, { apiKey: e.target.value })}
-                      autoComplete="new-password"
-                      data-1p-ignore="true"
-                      data-lpignore="true"
-                      data-bwignore="true"
-                      disabled={mutating}
-                      placeholder={
-                        entry.existingApiKey
-                          ? t('providersPage.form.apiKeyEditPlaceholder')
-                          : t('providersPage.form.apiKeyCreatePlaceholder')
-                      }
-                    />
-                    <button
-                      type="button"
-                      className={styles.passwordToggle}
-                      onClick={() => togglePasswordVisibility(idx)}
-                      disabled={mutating}
-                      aria-label={
-                        showPasswords.has(idx)
-                          ? t('providersPage.form.hideApiKey')
-                          : t('providersPage.form.showApiKey')
-                      }
-                      title={
-                        showPasswords.has(idx)
-                          ? t('providersPage.form.hideApiKey')
-                          : t('providersPage.form.showApiKey')
-                      }
-                    >
-                      {showPasswords.has(idx) ? <IconEyeOff size={16} /> : <IconEye size={16} />}
-                    </button>
-                  </div>
-                </div>
-                <div className={styles.field}>
-                  <label className={styles.label}>{t('providersPage.form.proxyUrl')}</label>
+            <div className={styles.entryCardBody}>
+              <div className={styles.field}>
+                <label className={styles.label}>{t('providersPage.form.apiKey')}</label>
+                <div className={styles.passwordField}>
                   <input
-                    className={styles.input}
-                    value={entry.proxyUrl}
-                    onChange={(e) => onUpdate(idx, { proxyUrl: e.target.value })}
+                    className={styles.passwordInput}
+                    type={showPasswords.has(idx) ? 'text' : 'password'}
+                    value={entry.apiKey}
+                    onChange={(e) => onUpdate(idx, { apiKey: e.target.value })}
+                    autoComplete="new-password"
+                    data-1p-ignore="true"
+                    data-lpignore="true"
+                    data-bwignore="true"
                     disabled={mutating}
-                    placeholder="http://127.0.0.1:7890"
+                    placeholder={
+                      entry.existingApiKey
+                        ? t('providersPage.form.apiKeyEditPlaceholder')
+                        : t('providersPage.form.apiKeyCreatePlaceholder')
+                    }
                   />
+                  <button
+                    type="button"
+                    className={styles.passwordToggle}
+                    onClick={() => togglePasswordVisibility(idx)}
+                    disabled={mutating}
+                    aria-label={
+                      showPasswords.has(idx)
+                        ? t('providersPage.form.hideApiKey')
+                        : t('providersPage.form.showApiKey')
+                    }
+                    title={
+                      showPasswords.has(idx)
+                        ? t('providersPage.form.hideApiKey')
+                        : t('providersPage.form.showApiKey')
+                    }
+                  >
+                    {showPasswords.has(idx) ? <IconEyeOff size={16} /> : <IconEye size={16} />}
+                  </button>
                 </div>
               </div>
-            ) : null}
+              <div className={styles.field}>
+                <label className={styles.label}>{t('providersPage.form.proxyUrl')}</label>
+                <input
+                  className={styles.input}
+                  value={entry.proxyUrl}
+                  onChange={(e) => onUpdate(idx, { proxyUrl: e.target.value })}
+                  disabled={mutating}
+                  placeholder="http://127.0.0.1:7890"
+                />
+              </div>
+            </div>
           </div>
         );
       })}

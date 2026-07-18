@@ -1362,6 +1362,7 @@
     "form": {
       "createEyebrow": "Создать",
       "editEyebrow": "Изменить",
+      "connectionSection": "Подключение",
       "name": "Название",
       "apiKey": "API-ключ",
       "apiKeyCreatePlaceholder": "Введите API-ключ",
