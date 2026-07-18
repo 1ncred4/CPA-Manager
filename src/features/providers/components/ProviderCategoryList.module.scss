@@ -29,14 +29,25 @@
   color: var(--muted-foreground);
 }
 
+/* Outer track — same pill frame as ModelsPage .tabs */
 .chipGrid {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: $spacing-xs;
+  align-items: center;
   min-width: 0;
+  padding: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 
-/* Match ModelsPage pill-tab button style for provider chips */
+:global([data-theme='dark']) .chipGrid {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Inner chips — same active/inactive treatment as ModelsPage .tab */
 .chip {
   display: inline-flex;
   align-items: center;
@@ -45,7 +56,7 @@
   padding: 8px 14px;
   border-radius: 999px;
   border: 1px solid transparent;
-  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   text-align: left;
