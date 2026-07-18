@@ -1454,7 +1454,6 @@
         "apiKeyRequired": "至少填寫一個 API 金鑰",
         "baseUrlRequired": "服務位址必填"
       },
-      "modelsManagedHint": "目前 {{count}} 個模型對應。建議在模型管理中編輯。",
       "excludedManagedHint": "排除模型規則於模型管理中維護；條目啟停仍使用「*」。",
       "openModelsPage": "在模型管理中開啟"
     },

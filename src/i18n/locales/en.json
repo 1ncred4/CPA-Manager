@@ -1428,7 +1428,6 @@
         "apiKeyRequired": "At least one API key is required",
         "baseUrlRequired": "Base URL is required"
       },
-      "modelsManagedHint": "{{count}} model mapping(s). Prefer editing in Model Management.",
       "excludedManagedHint": "Excluded-model rules are managed in Model Management. Entry disable still uses \"*\".",
       "openModelsPage": "Open in Model Management"
     },

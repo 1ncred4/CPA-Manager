@@ -780,26 +780,6 @@ export function BaseProviderForm({
           hint={`${existingModelNames.size}`}
         >
           <div className={styles.entriesList}>
-            {mode === 'edit' && resource ? (
-              <div className={styles.field}>
-                <span className={styles.labelHint}>
-                  {t('providersPage.form.modelsManagedHint', {
-                    defaultValue:
-                      'Model mapping is managed in Model Management. Discovery below can still seed local draft rows for this form.',
-                    count: existingModelNames.size,
-                  })}
-                </span>
-                <Link
-                  to={`/models/api-key?brand=${encodeURIComponent(resource.brand)}&id=${encodeURIComponent(resource.id)}&focus=models`}
-                  className={styles.connectivityBtn}
-                  style={{ display: 'inline-flex', width: 'fit-content', textDecoration: 'none' }}
-                >
-                  {t('providersPage.form.openModelsPage', {
-                    defaultValue: 'Open in Model Management',
-                  })}
-                </Link>
-              </div>
-            ) : null}
             {discovery.available ? (
               <div className={styles.entriesToolbar}>
                 <button
@@ -828,7 +808,6 @@ export function BaseProviderForm({
                 onClose={closeDiscovery}
               />
             ) : null}
-            {/* Keep editor for create flow and as advanced draft; edit prefers Models page */}
             <ModelEntriesEditor
               models={modelsList}
               extendedOptions={supportsOpenAIModelOptions}

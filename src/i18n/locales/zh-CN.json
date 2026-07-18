@@ -1428,7 +1428,6 @@
         "apiKeyRequired": "至少填写一个 API 密钥",
         "baseUrlRequired": "服务地址必填"
       },
-      "modelsManagedHint": "当前 {{count}} 个模型映射。建议在模型管理中编辑。",
       "excludedManagedHint": "排除模型规则在模型管理中维护；条目启停仍使用“*”。",
       "openModelsPage": "在模型管理中打开"
     },

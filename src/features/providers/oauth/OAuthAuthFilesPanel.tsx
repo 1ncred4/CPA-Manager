@@ -4,9 +4,8 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { IconPlus, IconSearch, IconFileText } from '@/components/ui/icons';
+import { IconSearch } from '@/components/ui/icons';
 import { copyToClipboard } from '@/utils/clipboard';
 import { AuthFileCard } from '@/features/authFiles/components/AuthFileCard';
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
@@ -33,16 +32,12 @@ export interface OAuthAuthFilesPanelProps {
   channel: string;
   disableControls: boolean;
   authFiles: ReturnType<typeof useAuthFilesData>;
-  onAdd: () => void;
-  onUpload: () => void;
 }
 
 export function OAuthAuthFilesPanel({
   channel,
   disableControls,
   authFiles,
-  onAdd,
-  onUpload,
 }: OAuthAuthFilesPanelProps) {
   const { t } = useTranslation();
   const showNotification = useNotificationStore((s) => s.showNotification);
@@ -55,7 +50,6 @@ export function OAuthAuthFilesPanel({
     selectedFiles,
     loading,
     error,
-    uploading,
     deleting,
     statusUpdating,
     fileInputRef,
@@ -177,28 +171,9 @@ export function OAuthAuthFilesPanel({
             />
           </div>
         </div>
-        <div className={styles.headerToolbarRow}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onUpload}
-              disabled={disableControls || uploading}
-              loading={uploading}
-            >
-              <IconFileText size={14} />
-              <span>{t('auth_files.upload_button', { defaultValue: 'Upload' })}</span>
-            </Button>
-            <Button size="sm" onClick={onAdd} disabled={disableControls}>
-              <IconPlus size={14} />
-              <span>
-                {t('providersPage.oauth.addCredential', { defaultValue: 'Add credential' })}
-              </span>
-            </Button>
-          </div>
-        </div>
       </div>
 
+      {/* Hidden input kept so page-level "添加凭证" sheet can trigger upload via fileInputRef */}
       <input
         ref={fileInputRef}
         type="file"
@@ -222,14 +197,6 @@ export function OAuthAuthFilesPanel({
               defaultValue: 'Start OAuth login or upload a credential JSON file.',
             })}
           />
-          <div className={styles.emptyAction}>
-            <button type="button" className={styles.emptyActionButton} onClick={onAdd}>
-              <IconPlus size={16} />
-              <span>
-                {t('providersPage.oauth.addCredential', { defaultValue: 'Add credential' })}
-              </span>
-            </button>
-          </div>
         </div>
       ) : (
         <div className={authStyles.fileGrid}>

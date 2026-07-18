@@ -525,8 +525,6 @@ export function ProvidersWorkbenchPage() {
             channel={activeCategory.channel}
             disableControls={connectionStatus !== 'connected'}
             authFiles={authFiles}
-            onAdd={() => setOauthAddOpen(true)}
-            onUpload={() => authFiles.handleUploadClick()}
           />
         ) : null}
       </div>
