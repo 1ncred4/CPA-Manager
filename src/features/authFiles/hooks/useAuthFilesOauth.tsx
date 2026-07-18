@@ -298,9 +298,10 @@ export function useAuthFilesOauth(options: UseAuthFilesOauthOptions): UseAuthFil
         return;
       }
 
+      // fork=true 会同时保留原模型名；新建映射默认关闭，避免原名与自定义名并存。
       const nextMappings: OAuthModelAliasEntry[] = [
         ...currentMappings,
-        { name: nameTrim, alias: aliasTrim, fork: true },
+        { name: nameTrim, alias: aliasTrim },
       ];
 
       try {

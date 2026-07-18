@@ -456,15 +456,17 @@ export function applyOauthAliasTargetChanges(input: {
   const nextForAlias: OAuthModelAliasEntry[] = [];
   nextModelIds.forEach((id) => {
     const prev = existingByName.get(lower(id));
+    // fork=true 表示同时保留原模型名；新建映射默认关闭，原名不再对外启用。
+    // 仅当既有条目已显式开启时才保留（编辑/重绑同名目标时不丢用户设置）。
     const entry: OAuthModelAliasEntry = {
       name: id,
       alias: aliasLiteral,
-      fork: prev?.fork ?? true,
     };
+    if (prev?.fork === true) {
+      entry.fork = true;
+    }
     if (typeof prev?.forceMapping === 'boolean') {
       entry.forceMapping = prev.forceMapping;
-    } else if (entry.fork !== false) {
-      entry.fork = true;
     }
     nextForAlias.push(entry);
   });

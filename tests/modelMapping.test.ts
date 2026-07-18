@@ -498,7 +498,11 @@ describe('modelMapping', () => {
       alias: 'chat',
       nextModelIds: ['new-model'],
     });
-    expect(replaced.find((e) => e.alias === 'chat')?.name).toBe('new-model');
+    // New targets default to fork off so the original model name is not kept enabled.
+    expect(replaced.find((e) => e.alias === 'chat')).toEqual({
+      name: 'new-model',
+      alias: 'chat',
+    });
     expect(replaced.find((e) => e.name === 'old')).toBeUndefined();
 
     const cleared = applyOauthAliasTargetChanges({
@@ -508,6 +512,16 @@ describe('modelMapping', () => {
     });
     expect(cleared).toHaveLength(1);
     expect(cleared[0].alias).toBe('other');
+  });
+
+  test('applyOauthAliasTargetChanges defaults fork off for brand-new targets', () => {
+    const next = applyOauthAliasTargetChanges({
+      entries: [],
+      alias: 'chat-plus',
+      nextModelIds: ['claude-sonnet-4-5'],
+    });
+    expect(next).toEqual([{ name: 'claude-sonnet-4-5', alias: 'chat-plus' }]);
+    expect(next[0].fork).toBeUndefined();
   });
 
   test('applyApiKeyModelAliasChanges sets and clears alias without dropping models', () => {
