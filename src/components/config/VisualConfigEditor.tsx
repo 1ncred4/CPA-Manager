@@ -207,7 +207,7 @@ export function VisualConfigEditor({
   const [activeSectionId, setActiveSectionId] = useState<VisualSectionId>('connectivity');
   const sectionRefs = useRef<Partial<Record<VisualSectionId, HTMLElement | null>>>({});
   const tabBarRef = useRef<HTMLDivElement | null>(null);
-  // Internal scroller for full-mode section bodies (tab bar stays fixed above it).
+  // Internal scroller for full-mode section bodies (left tab rail stays fixed beside it).
   const sectionsScrollerRef = useRef<HTMLDivElement | null>(null);
   // After a manual tab click, ignore scroll-spy updates briefly so the selected tab
   // doesn't flash back while smooth-scroll is still in progress.
@@ -511,7 +511,7 @@ export function VisualConfigEditor({
     ) || hasPayloadValidationErrors;
   const payloadValidationKey = hasPayloadValidationErrors ? 'payload-errors' : 'payload-ok';
 
-  // Scroll-spy against the internal sections scroller so the fixed tab bar tracks the
+  // Scroll-spy against the internal sections scroller so the left tab rail tracks the
   // section currently visible at the top of the settings body.
   useEffect(() => {
     if (mode !== 'full' || !isCurrentLayer) return undefined;
@@ -523,7 +523,7 @@ export function VisualConfigEditor({
 
       // When pinned near the bottom, a short final section (e.g. collapsed Payload)
       // can never push its top past the activation marker — force-select it so the
-      // tab bar matches what the user is actually looking at.
+      // tab rail matches what the user is actually looking at.
       const maxScroll = scroller.scrollHeight - scroller.clientHeight;
       if (maxScroll > 0 && scroller.scrollTop >= maxScroll - 4) {
         const last = sections[sections.length - 1];
@@ -553,7 +553,9 @@ export function VisualConfigEditor({
     };
   }, [isCurrentLayer, mode, sections]);
 
-  // Keep the active tab visible inside the horizontal tab scroller on narrow viewports.
+  // Keep the active tab visible inside the tab scroller — vertical on the left rail,
+  // horizontal on the mobile top strip. Prefer dual-axis scrollBy over scrollIntoView
+  // so we never drag ancestor page scrollers along with the tab rail.
   useEffect(() => {
     if (mode !== 'full') return;
     const scroller = tabBarRef.current?.firstElementChild as HTMLElement | null;
@@ -562,10 +564,20 @@ export function VisualConfigEditor({
     if (!button) return;
     const sRect = scroller.getBoundingClientRect();
     const bRect = button.getBoundingClientRect();
-    if (bRect.left < sRect.left + 8) {
-      scroller.scrollBy({ left: bRect.left - sRect.left - 8, behavior: 'smooth' });
-    } else if (bRect.right > sRect.right - 8) {
-      scroller.scrollBy({ left: bRect.right - sRect.right + 8, behavior: 'smooth' });
+    const pad = 8;
+
+    // Vertical (desktop left rail)
+    if (bRect.top < sRect.top + pad) {
+      scroller.scrollBy({ top: bRect.top - sRect.top - pad, behavior: 'smooth' });
+    } else if (bRect.bottom > sRect.bottom - pad) {
+      scroller.scrollBy({ top: bRect.bottom - sRect.bottom + pad, behavior: 'smooth' });
+    }
+
+    // Horizontal (mobile top strip)
+    if (bRect.left < sRect.left + pad) {
+      scroller.scrollBy({ left: bRect.left - sRect.left - pad, behavior: 'smooth' });
+    } else if (bRect.right > sRect.right - pad) {
+      scroller.scrollBy({ left: bRect.right - sRect.right + pad, behavior: 'smooth' });
     }
   }, [activeSectionId, mode]);
 
