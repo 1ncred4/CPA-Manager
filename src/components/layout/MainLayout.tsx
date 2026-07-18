@@ -333,7 +333,7 @@ export function MainLayout() {
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
 
-  const fullBrandName = 'CLI Proxy API Management Center';
+  const fullBrandName = 'CPA-Manager';
   const isLogsPage = location.pathname.startsWith('/logs');
   const isConfigPage = location.pathname.startsWith('/config');
   const isPluginResourcePage = location.pathname.startsWith('/plugin-pages');

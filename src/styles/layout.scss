@@ -476,7 +476,7 @@
   .sidebar-brand {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: center;
     gap: 10px;
     min-height: 42px;
     padding: 4px 10px 14px;
@@ -887,7 +887,10 @@
       width: var(--sidebar-panel-width);
       padding: 18px 14px;
 
-      .sidebar-brand,
+      .sidebar-brand {
+        justify-content: center;
+      }
+
       .nav-item {
         justify-content: flex-start;
       }
