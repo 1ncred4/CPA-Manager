@@ -520,7 +520,20 @@ export function VisualConfigEditor({
 
     const update = () => {
       if (Date.now() < suppressScrollSpyUntilRef.current) return;
-      const marker = scroller.getBoundingClientRect().top + 12;
+
+      // When pinned near the bottom, a short final section (e.g. collapsed Payload)
+      // can never push its top past the activation marker — force-select it so the
+      // tab bar matches what the user is actually looking at.
+      const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+      if (maxScroll > 0 && scroller.scrollTop >= maxScroll - 4) {
+        const last = sections[sections.length - 1];
+        if (last) setActiveSectionId(last.id);
+        return;
+      }
+
+      // Activation line sits below the scroller's top padding so a section scrolled
+      // flush with the content start still qualifies as active.
+      const marker = scroller.getBoundingClientRect().top + 24;
       let current: VisualSectionId | null = sections[0]?.id ?? null;
       for (const section of sections) {
         const el = sectionRefs.current[section.id];

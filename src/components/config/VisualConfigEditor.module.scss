@@ -605,16 +605,22 @@
 }
 
 // Keep selector specificity above `.tab:hover` so the active pill never regresses on hover.
+// Border must match the fill color (not transparent) — a transparent border lets the lighter
+// tabBar background show through and reads as a hairline on the left/right edges.
 .tab.tabActive {
   color: var(--primary-contrast, #ffffff);
   background: var(--text-primary);
-  border-color: transparent;
+  border-color: var(--text-primary);
   box-shadow: none;
+  outline: none;
 
-  &:hover {
+  &:hover,
+  &:focus {
     color: var(--primary-contrast, #ffffff);
     background: var(--text-primary);
-    border-color: transparent;
+    border-color: var(--text-primary);
+    outline: none;
+    box-shadow: none;
   }
 
   .tabBadge {
