@@ -35,6 +35,7 @@ function providerKeyToResource(
 ): ProviderResource {
   const apiKey = config.apiKey ?? '';
   const disabled = hasDisableAllModelsRule(config.excludedModels);
+  const models = collectModelNames(config.models);
   const flags: ProviderResource['flags'] = {};
   if (brand === 'codex' || brand === 'xai') {
     flags.websockets = (config as ProviderKeyConfig).websockets === true;
@@ -63,8 +64,8 @@ function providerKeyToResource(
     baseUrl: config.baseUrl ?? null,
     proxyUrl: config.proxyUrl ?? null,
     prefix: config.prefix ?? null,
-    modelCount: config.models?.length ?? 0,
-    models: collectModelNames(config.models),
+    modelCount: models.length,
+    models,
     priority: normalizePriority(config.priority),
     headerCount: countHeaders(config.headers),
     excludedModelCount: stripDisableAllModelsRule(config.excludedModels).length,
@@ -101,6 +102,7 @@ export function openaiToResource(config: OpenAIProviderConfig, index: number): P
   const name = (config.name ?? '').trim();
   const firstEntry = config.apiKeyEntries?.[0];
   const previewApiKey = firstEntry?.apiKey ? maskApiKey(firstEntry.apiKey) : null;
+  const models = collectModelNames(config.models);
   return {
     id: buildId('openaiCompatibility', sourceIndex, truncateForId(name) || `#${sourceIndex}`),
     brand: 'openaiCompatibility',
@@ -113,8 +115,8 @@ export function openaiToResource(config: OpenAIProviderConfig, index: number): P
     baseUrl: config.baseUrl ?? null,
     proxyUrl: null,
     prefix: config.prefix ?? null,
-    modelCount: config.models?.length ?? 0,
-    models: collectModelNames(config.models),
+    modelCount: models.length,
+    models,
     priority: normalizePriority(config.priority),
     headerCount: countHeaders(config.headers),
     excludedModelCount: 0,
