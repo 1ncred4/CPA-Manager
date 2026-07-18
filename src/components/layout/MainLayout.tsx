@@ -24,6 +24,7 @@ import {
   IconSidebarQuota,
   IconSidebarStore,
   IconSidebarSystem,
+  IconSatellite,
   IconChevronDown,
 } from '@/components/ui/icons';
 import catAvatar from '@/assets/cat-avatar.png';
@@ -50,6 +51,7 @@ const sidebarIcons: Record<string, ReactNode> = {
   dashboard: <IconSidebarDashboard size={18} />,
   aiProviders: <IconSidebarProviders size={18} />,
   models: <IconModelCluster size={18} />,
+  modelList: <IconSatellite size={18} />,
   quota: <IconSidebarQuota size={18} />,
   plugins: <IconSidebarPlugins size={18} />,
   pluginStore: <IconSidebarStore size={18} />,
@@ -574,6 +576,12 @@ export function MainLayout() {
           labelKey: 'nav.models',
           metaKey: 'nav_meta.models',
           icon: sidebarIcons.models,
+        },
+        {
+          path: '/model-list',
+          labelKey: 'nav.model_list',
+          metaKey: 'nav_meta.model_list',
+          icon: sidebarIcons.modelList,
         },
       ],
     },

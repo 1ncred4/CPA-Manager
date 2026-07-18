@@ -1,61 +1,81 @@
 .container {
   width: 100%;
+  max-height: calc(100vh - var(--header-height, 80px) - 32px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .pageTitle {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 700;
   color: var(--text-primary);
-  margin: 0 0 $spacing-xl 0;
+  margin: 0 0 $spacing-md 0;
+  flex-shrink: 0;
 }
 
-.content {
+.layout {
   display: flex;
   flex-direction: column;
-  gap: $spacing-xl;
+  gap: $spacing-md;
+  min-height: 0;
+  flex: 1;
 }
 
 .aboutCard {
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .aboutHeader {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  width: 100%;
+  justify-content: flex-start;
   gap: $spacing-md;
-  padding: $spacing-lg 0 $spacing-xl;
+  width: 100%;
+  padding: 4px 0 $spacing-md;
 }
 
 .aboutLogo {
-  width: 108px;
-  height: 108px;
-  border-radius: 26px;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
   object-fit: cover;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.14);
+  flex-shrink: 0;
+}
+
+.aboutText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .aboutTitle {
-  width: min(100%, 920px);
-  font-size: clamp(28px, 4.2vw, 44px);
+  font-size: clamp(22px, 2.4vw, 30px);
   font-weight: 800;
-  line-height: 1.12;
+  line-height: 1.15;
   color: var(--text-primary);
   letter-spacing: -0.02em;
-  text-align: center;
-  text-wrap: balance;
-  white-space: normal;
-  overflow-wrap: anywhere;
+}
+
+.aboutSubtitle {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.4;
 }
 
 .aboutInfoGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: $spacing-md;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: $spacing-sm;
 
-  @media (max-width: 900px) {
+  @media (max-width: 1100px) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @media (max-width: 640px) {
     grid-template-columns: 1fr;
   }
 }
@@ -63,9 +83,9 @@
 .infoTile {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-height: 120px;
-  padding: $spacing-md $spacing-lg;
+  gap: 4px;
+  min-height: 88px;
+  padding: $spacing-sm $spacing-md;
   border-radius: $radius-lg;
   border: 1px solid var(--border-color);
   background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
@@ -76,7 +96,6 @@
   border: 1px solid var(--border-color);
   background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
   color: inherit;
-  padding: $spacing-md $spacing-lg;
   cursor: pointer;
   transition:
     transform 0.18s ease,
@@ -95,7 +114,7 @@
 }
 
 .tileLabel {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
 }
@@ -105,7 +124,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: $spacing-sm;
-  min-height: 40px;
+  min-height: 28px;
 }
 
 .tileAction {
@@ -115,7 +134,7 @@
 }
 
 .tileValue {
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.25;
@@ -126,171 +145,42 @@
   font-size: 12px;
   color: var(--text-tertiary);
   line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-md;
-}
-
-.sectionTitle {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 $spacing-md 0;
-}
-
-.sectionDescription {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin: 0 0 $spacing-md 0;
-}
-
-.clearLoginActions {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-}
-
-.infoGrid {
-  display: grid;
-  gap: $spacing-sm;
-
-  .infoRow {
-    display: flex;
-    justify-content: space-between;
-    padding: $spacing-sm $spacing-md;
-    background-color: var(--bg-secondary);
-    border-radius: $radius-md;
-
-    .label {
-      font-weight: 500;
-      color: var(--text-secondary);
-    }
-
-    .value {
-      color: var(--text-primary);
-      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-    }
-  }
-}
-
-.modelsList {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-sm;
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.modelItem {
-  padding: $spacing-sm $spacing-md;
-  background-color: var(--bg-secondary);
-  border-radius: $radius-md;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 13px;
-
-  &:hover {
-    background-color: var(--bg-hover);
-  }
-}
-
-.modelTags {
-  display: flex;
-  flex-wrap: wrap;
-  flex: 0 0 100%;
-  gap: $spacing-sm;
-}
-
-.groupTitle {
-  display: flex;
-  align-items: center;
-  gap: $spacing-sm;
-}
-
-.groupIcon {
-  width: 18px;
-  height: 18px;
+.linksCard {
   flex-shrink: 0;
-}
-
-.modelTag {
-  display: inline-flex;
-  align-items: center;
-  gap: $spacing-xs;
-  padding: 4px 10px;
-  border-radius: $radius-full;
-  border: 1px solid var(--border-color);
-  background-color: var(--bg-secondary);
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
-    monospace;
-}
-
-.modelName {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.modelAlias {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.versionCheck {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-md;
-}
-
-.versionInfo {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: $spacing-md;
-
-  .versionItem {
-    padding: $spacing-md;
-    background-color: var(--bg-secondary);
-    border-radius: $radius-md;
-
-    .label {
-      font-size: 12px;
-      color: var(--text-secondary);
-      margin-bottom: $spacing-xs;
-    }
-
-    .version {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text-primary);
-      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-    }
-  }
 }
 
 .quickLinks {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: $spacing-md;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: $spacing-sm;
+
+  @media (max-width: 900px) {
+    grid-template-columns: 1fr;
+  }
 }
 
 .linkCard {
   display: flex;
   align-items: center;
-  gap: $spacing-md;
-  padding: $spacing-md $spacing-lg;
+  gap: $spacing-sm;
+  padding: $spacing-sm $spacing-md;
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: $radius-lg;
   text-decoration: none;
   color: inherit;
   transition: all 0.2s ease;
+  min-height: 68px;
 
   &:hover {
     background-color: var(--bg-hover);
     border-color: var(--primary-color);
-    transform: translateY(-2px);
+    transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   }
 
@@ -303,8 +193,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   border-radius: $radius-md;
   background-color: var(--primary-color);
   color: white;
@@ -328,7 +218,7 @@
   display: flex;
   align-items: center;
   gap: $spacing-xs;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 2px;
@@ -340,35 +230,57 @@
 }
 
 .linkDesc {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-@media (max-width: 768px) {
-  .aboutLogo {
-    width: 92px;
-    height: 92px;
-    border-radius: 22px;
-  }
+.clearCard {
+  flex-shrink: 0;
+}
 
-  .aboutTitle {
-    width: min(100%, 24ch);
-    font-size: clamp(22px, 6.6vw, 34px);
-    font-weight: 700;
-    line-height: 1.18;
-    letter-spacing: -0.012em;
+.clearLoginRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-md;
+
+  @media (max-width: 640px) {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 
-@media (max-width: 520px) {
+.clearLoginText {
+  min-width: 0;
+}
+
+.clearLoginTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.clearLoginDesc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .container {
+    max-height: none;
+  }
+
+  .aboutLogo {
+    width: 56px;
+    height: 56px;
+  }
+
   .aboutTitle {
-    width: min(100%, 19ch);
-    font-size: clamp(20px, 7.2vw, 28px);
-    font-weight: 600;
-    line-height: 1.22;
-    letter-spacing: -0.006em;
+    font-size: 22px;
   }
 }

@@ -161,7 +161,7 @@ export function DashboardPage() {
       label: t('dashboard.available_models'),
       value: getDashboardModelsStatValue(models.length, modelsLoading, modelsError),
       icon: <IconSatellite size={24} />,
-      path: '/system',
+      path: '/model-list',
       loading: modelsLoading,
       sublabel: t('dashboard.available_models_desc'),
     },

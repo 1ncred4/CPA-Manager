@@ -108,7 +108,8 @@
     "config_management": "Config Panel",
     "logs": "Logs Viewer",
     "system_info": "Management Center Info",
-    "models": "Model Management"
+    "models": "Model Management",
+    "model_list": "Model List"
   },
   "nav_groups": {
     "operate": "Operate",
@@ -128,7 +129,8 @@
     "logs": "Request tracing",
     "config_management": "Gateway configuration",
     "system_info": "Runtime & diagnostics",
-    "models": "Disable & map models"
+    "models": "Disable & map models",
+    "model_list": "All available models"
   },
   "dashboard": {
     "current_config": "Current Configuration",
@@ -1236,7 +1238,8 @@
   },
   "system_info": {
     "title": "Management Center Info",
-    "about_title": "CLI Proxy API Management Center",
+    "about_title": "CPA-Manager",
+    "about_subtitle": "CLI Proxy API Management Center",
     "models_title": "Available Models",
     "models_desc": "Shows the /models response and uses saved API keys for auth automatically.",
     "models_loading": "Loading available models...",
@@ -1254,7 +1257,7 @@
     "link_main_repo": "Main Repository",
     "link_main_repo_desc": "CLI Proxy API core program source code",
     "link_webui_repo": "WebUI Repository",
-    "link_webui_repo_desc": "Management Center frontend source code",
+    "link_webui_repo_desc": "CPA-Manager management center source code",
     "link_docs": "Documentation",
     "link_docs_desc": "Configuration tutorials and guides",
     "clear_login_title": "Local Login Data",

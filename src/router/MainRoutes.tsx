@@ -12,6 +12,7 @@ import { PluginStorePage } from '@/features/plugins/PluginStorePage';
 import { ConfigPage } from '@/pages/ConfigPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { SystemPage } from '@/pages/SystemPage';
+import { ModelListPage } from '@/pages/ModelListPage';
 import { useAuthStore } from '@/stores';
 
 const createMainRoutes = (supportsPlugin: boolean) => [
@@ -38,6 +39,7 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/models/excluded', element: <ModelExcludedEditPage /> },
   { path: '/models/mapping', element: <ModelAliasEditPage /> },
   { path: '/models/api-key', element: <ApiKeyModelsEditPage /> },
+  { path: '/model-list', element: <ModelListPage /> },
   { path: '/quota', element: <QuotaPage /> },
   ...(supportsPlugin
     ? [

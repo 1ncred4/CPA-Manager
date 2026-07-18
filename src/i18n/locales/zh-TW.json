@@ -108,7 +108,8 @@
     "config_management": "設定面板",
     "logs": "記錄檢視",
     "system_info": "中心資訊",
-    "models": "模型管理"
+    "models": "模型管理",
+    "model_list": "模型列表"
   },
   "nav_groups": {
     "operate": "運行",
@@ -128,7 +129,8 @@
     "logs": "請求追蹤與排查",
     "config_management": "閘道基礎設定",
     "system_info": "運行與診斷資訊",
-    "models": "停用與對應模型"
+    "models": "停用與對應模型",
+    "model_list": "全部可用模型"
   },
   "dashboard": {
     "current_config": "目前設定",
@@ -1262,7 +1264,8 @@
   },
   "system_info": {
     "title": "管理中心資訊",
-    "about_title": "CLI Proxy API Management Center",
+    "about_title": "CPA-Manager",
+    "about_subtitle": "CLI Proxy API Management Center",
     "models_title": "可用模型清單",
     "models_desc": "展示 /models 回傳的模型，並自動使用伺服器儲存的 API Key 進行驗證。",
     "models_loading": "正在載入可用模型...",
@@ -1280,7 +1283,7 @@
     "link_main_repo": "主程式儲存庫",
     "link_main_repo_desc": "CLI Proxy API 核心程式原始碼",
     "link_webui_repo": "WebUI 儲存庫",
-    "link_webui_repo_desc": "管理中心前端介面原始碼",
+    "link_webui_repo_desc": "CPA-Manager 管理中心原始碼",
     "link_docs": "使用教學",
     "link_docs_desc": "設定指南和使用說明",
     "clear_login_title": "本地登入資訊",

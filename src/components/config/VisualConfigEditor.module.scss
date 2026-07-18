@@ -556,9 +556,8 @@
 }
 
 // Left-side section navigation rail (top horizontal strip on mobile).
-// Note: overflow-y:auto forces overflow-x to compute as auto (CSS spec), so we CANNOT
-// rely on overflow:visible for scale — active "放大" must stay inside the content box
-// (left-origin scale + outer padding), otherwise the left edge clips.
+// Active "放大" is layout-based (padding / font-size / min-height) — never transform:scale,
+// which paints outside the box and gets clipped by the rail/scroller overflow.
 .tabBar {
   position: relative;
   z-index: 5;
@@ -568,9 +567,7 @@
   width: 188px;
   max-width: 42%;
   min-height: 0;
-  // Outer gutter: left edge of tabs never sits flush against the workspace edge,
-  // and right gutter absorbs left-origin scale growth toward the sections pane.
-  padding: 10px 12px 10px 10px;
+  padding: 10px 10px 10px 10px;
   background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
   border-right: 1px solid var(--border-color);
   overflow: hidden;
@@ -588,12 +585,11 @@
 .tabScroller {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   flex: 1 1 auto;
   min-height: 0;
   max-height: 100%;
-  // Extra horizontal padding keeps scaled active pills fully inside the scrollport.
-  padding: 2px 4px;
+  padding: 0;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: none;
@@ -606,7 +602,7 @@
     flex-direction: row;
     flex: 0 0 auto;
     max-height: none;
-    padding: 2px 2px;
+    padding: 0;
     gap: 4px;
     overflow-x: auto;
     overflow-y: hidden;
@@ -621,8 +617,8 @@
   flex: 0 0 auto;
   box-sizing: border-box;
   width: 100%;
-  min-height: 36px;
-  padding: 7px 12px;
+  min-height: 34px;
+  padding: 6px 12px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: transparent;
@@ -632,17 +628,14 @@
   line-height: 1.25;
   text-align: left;
   white-space: normal;
-  // Grow to the RIGHT only so the left edge never leaves the layout box / gets clipped.
-  transform-origin: left center;
   transition:
     background-color 0.15s ease,
     border-color 0.15s ease,
     color 0.15s ease,
     box-shadow 0.15s ease,
-    transform 0.18s ease,
-    font-size 0.18s ease,
-    padding 0.18s ease,
-    min-height 0.18s ease;
+    font-size 0.15s ease,
+    padding 0.15s ease,
+    min-height 0.15s ease;
 
   &:hover:not(.tabActive) {
     color: var(--text-primary);
@@ -657,26 +650,24 @@
   @include mobile {
     width: auto;
     white-space: nowrap;
-    transform-origin: center center;
   }
 }
 
 // Keep selector specificity above `.tab:hover` so the active pill never regresses on hover.
 // Border must match the fill color (not transparent) — a transparent border lets the lighter
 // tabBar background show through and reads as a hairline on the left/right edges.
-// Active tab is enlarged (放大) via left-origin scale + padding/font — left edge stays put.
+// "放大" via larger min-height / padding / font-size (layout box grows in-flow, no clip).
 .tab.tabActive {
   z-index: 1;
-  min-height: 40px;
-  padding: 9px 12px;
+  min-height: 42px;
+  padding: 10px 12px;
   color: var(--primary-contrast, #ffffff);
   background: var(--text-primary);
   border-color: var(--text-primary);
   font-size: 14px;
   font-weight: 750;
-  box-shadow: 0 2px 10px color-mix(in srgb, var(--text-primary) 18%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--text-primary) 16%, transparent);
   outline: none;
-  transform: scale(1.04);
 
   &:hover,
   &:focus {
@@ -684,7 +675,7 @@
     background: var(--text-primary);
     border-color: var(--text-primary);
     outline: none;
-    box-shadow: 0 2px 10px color-mix(in srgb, var(--text-primary) 18%, transparent);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--text-primary) 16%, transparent);
   }
 
   .tabBadge {
@@ -694,10 +685,9 @@
   }
 
   @include mobile {
-    min-height: 34px;
-    padding: 6px 12px;
+    min-height: 36px;
+    padding: 7px 12px;
     font-size: 13px;
-    transform: scale(1.03);
     box-shadow: none;
   }
 }
@@ -709,7 +699,6 @@
       background-color 0.15s ease,
       border-color 0.15s ease,
       color 0.15s ease;
-    transform: none;
   }
 }
 
