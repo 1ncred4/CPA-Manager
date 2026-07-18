@@ -447,6 +447,18 @@
   width: 100%;
   max-width: 760px;
   min-width: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+
+  @include mobile {
+    overflow: visible;
+    flex: 0 0 auto;
+  }
 }
 
 .simpleForm {

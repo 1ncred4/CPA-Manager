@@ -209,6 +209,9 @@ export function VisualConfigEditor({
   const tabBarRef = useRef<HTMLDivElement | null>(null);
   // Internal scroller for full-mode section bodies (tab bar stays fixed above it).
   const sectionsScrollerRef = useRef<HTMLDivElement | null>(null);
+  // After a manual tab click, ignore scroll-spy updates briefly so the selected tab
+  // doesn't flash back while smooth-scroll is still in progress.
+  const suppressScrollSpyUntilRef = useRef(0);
   const [searchQuery, setSearchQuery] = useState('');
   // Dropdown visibility is tracked separately from the query text so a jump can close the
   // results while leaving the typed text in the box for further editing.
@@ -249,6 +252,7 @@ export function VisualConfigEditor({
       setSearchOpen(false);
       handleModeChange('full');
       setActiveSectionId(entry.sectionId);
+      suppressScrollSpyUntilRef.current = Date.now() + 700;
       // A new object instance defers scroll/highlight to the effect below, giving a
       // simple→full switch time to mount the DOM before we query for the field.
       setJumpRequest({ fieldId: entry.fieldId, sectionId: entry.sectionId });
@@ -515,6 +519,7 @@ export function VisualConfigEditor({
     if (!scroller) return undefined;
 
     const update = () => {
+      if (Date.now() < suppressScrollSpyUntilRef.current) return;
       const marker = scroller.getBoundingClientRect().top + 12;
       let current: VisualSectionId | null = sections[0]?.id ?? null;
       for (const section of sections) {
@@ -553,6 +558,7 @@ export function VisualConfigEditor({
 
   const handleSectionJump = useCallback((sectionId: VisualSectionId) => {
     setActiveSectionId(sectionId);
+    suppressScrollSpyUntilRef.current = Date.now() + 700;
     const scroller = sectionsScrollerRef.current;
     const el = sectionRefs.current[sectionId];
     if (!el) return;
