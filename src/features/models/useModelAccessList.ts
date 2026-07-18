@@ -1,5 +1,7 @@
 /**
  * 模型禁用 Tab：加载 OAuth 定义 + API Key models，支持逐模型开关
+ *
+ * OpenAI Compatibility 无 excludedModels：禁用 = 从 models[] 摘除并 catalog 挂起。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -19,7 +21,7 @@ import {
 import { PROVIDER_LOGOS } from '@/features/providers/brandLogos';
 import { useProviderWorkbench } from '@/features/providers/useProviderWorkbench';
 import type { ProviderResource } from '@/features/providers/types';
-import type { GeminiKeyConfig, ProviderKeyConfig } from '@/types';
+import type { GeminiKeyConfig, ModelAlias, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import { stripDisableAllModelsRule } from '@/components/providers/utils';
 import { getErrorMessage } from '@/utils/helpers';
 import {
@@ -32,6 +34,16 @@ import {
   type ModelAccessRow,
 } from './modelAccessRows';
 import { updateApiKeyExcludedModels } from './updateApiKeyExcludedModels';
+import { updateApiKeyModels } from './updateApiKeyModels';
+import {
+  listSuspendedCatalog,
+  mergeSuspendedCatalog,
+  reconcileSuspendedCatalogWithModels,
+  removeModelFromCatalog,
+  restoreModelToCatalog,
+  takeSuspendedCatalog,
+  SUSPENDED_CATALOG_CHANGED_EVENT,
+} from './catalogSuspend';
 import { targetRefFromAccessRow } from './mappingSuspend';
 import {
   pruneMappingsForDisabledTarget,
@@ -94,6 +106,11 @@ export function useModelAccessList(): UseModelAccessListResult {
   const [apiKeyExcludedOverrides, setApiKeyExcludedOverrides] = useState<
     Record<string, string[]>
   >({});
+  /**
+   * OpenAI catalog 挂起的乐观覆盖：resourceId -> disabled modelIds。
+   * 与 localStorage 真源合并后用于行构建。
+   */
+  const [catalogSuspendTick, setCatalogSuspendTick] = useState(0);
   const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set());
 
   const loadRequestRef = useRef(0);
@@ -152,6 +169,40 @@ export function useModelAccessList(): UseModelAccessListResult {
       return changed ? next : prev;
     });
   }, [allApiKeyResources]);
+
+  // 用户在提供商/目录编辑页把模型加回 models[] 时，清掉对应 catalog 挂起
+  useEffect(() => {
+    if (!apiBase) return;
+    allApiKeyResources.forEach((resource) => {
+      if (resource.brand !== 'openaiCompatibility') return;
+      reconcileSuspendedCatalogWithModels(apiBase, resource.id, resource.models ?? []);
+    });
+    // reconcile 内部 write 会派发 SUSPENDED_CATALOG_CHANGED_EVENT；无变更则不 tick
+  }, [allApiKeyResources, apiBase]);
+
+  // 同页其它组件改了 catalog 挂起时刷新行
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ apiBase?: string }>).detail;
+      if (detail?.apiBase && detail.apiBase !== apiBase) return;
+      setCatalogSuspendTick((n) => n + 1);
+    };
+    window.addEventListener(SUSPENDED_CATALOG_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(SUSPENDED_CATALOG_CHANGED_EVENT, onChange);
+  }, [apiBase]);
+
+  const suspendedCatalogByResource = useMemo(() => {
+    void catalogSuspendTick;
+    if (!apiBase) return new Map<string, string[]>();
+    const map = new Map<string, string[]>();
+    listSuspendedCatalog(apiBase).forEach((entry) => {
+      const list = map.get(entry.resourceId) ?? [];
+      list.push(entry.modelId);
+      map.set(entry.resourceId, list);
+    });
+    return map;
+  }, [apiBase, catalogSuspendTick]);
 
   const loadAll = useCallback(async () => {
     const requestId = ++loadRequestRef.current;
@@ -273,6 +324,10 @@ export function useModelAccessList(): UseModelAccessListResult {
           resource: effectiveResource,
           providerLabel,
           iconSrc,
+          suspendedCatalogModelIds:
+            resource.brand === 'openaiCompatibility'
+              ? (suspendedCatalogByResource.get(resource.id) ?? [])
+              : undefined,
         })
       );
     });
@@ -285,6 +340,7 @@ export function useModelAccessList(): UseModelAccessListResult {
     oauthExcludedError,
     oauthModels,
     resolvedTheme,
+    suspendedCatalogByResource,
     t,
   ]);
 
@@ -433,7 +489,82 @@ export function useModelAccessList(): UseModelAccessListResult {
       if (row.source === 'apiKey' && row.resourceId) {
         const resourceId = row.resourceId;
         const resource = resourcesRef.current.find((r) => r.id === resourceId);
-        if (!resource || resource.brand === 'openaiCompatibility') return;
+        if (!resource) return;
+
+        // OpenAI Compatibility: simulate per-model disable via models[] + catalog suspend
+        if (resource.brand === 'openaiCompatibility' || row.disableMode === 'catalog') {
+          setRowPending(row.key, true);
+          try {
+            await enqueueSerial(apiKeyQueuesRef.current, resourceId, async () => {
+              if (wantExclude) {
+                // 先剪枝映射（此时 models[] 里还在），再从目录摘掉
+                await syncMappingsAfterToggle(row, false);
+
+                const latestResource =
+                  resourcesRef.current.find((r) => r.id === resourceId) ?? resource;
+                const cfg = latestResource.raw as OpenAIProviderConfig;
+                // prune 可能已清掉 alias，但 name 条目仍在；以最新 raw 为准
+                const currentModels = (cfg.models ?? []) as ModelAlias[];
+                const { next, removed } = removeModelFromCatalog(currentModels, row.modelId);
+
+                // 若 prune 已把 alias 清掉，removed 可能只剩裸 name；挂起仍用 removed
+                // 若映射挂起里还有 alias，启用时 restoreMappings 会再写回 alias
+                const entriesToSuspend =
+                  removed.length > 0 ? removed : ([{ name: row.modelId }] as ModelAlias[]);
+                mergeSuspendedCatalog(apiBase, resourceId, row.modelId, entriesToSuspend);
+
+                try {
+                  if (removed.length > 0 || currentModels.length !== next.length) {
+                    await updateApiKeyModels(latestResource, next);
+                  }
+                } catch (writeErr) {
+                  // 写回失败：撤掉 catalog 挂起，避免「目录还在却显示已禁用」
+                  takeSuspendedCatalog(apiBase, resourceId, row.modelId);
+                  throw writeErr;
+                }
+
+                setCatalogSuspendTick((n) => n + 1);
+                await workbenchRef.current.refetch();
+                return;
+              }
+
+              // 启用：先写回 models[]，再恢复映射
+              const suspended = takeSuspendedCatalog(apiBase, resourceId, row.modelId);
+              const toRestore = suspended?.entries?.length
+                ? suspended.entries
+                : ([{ name: row.modelId }] as ModelAlias[]);
+
+              const latestResource =
+                resourcesRef.current.find((r) => r.id === resourceId) ?? resource;
+              const cfg = latestResource.raw as OpenAIProviderConfig;
+              const currentModels = (cfg.models ?? []) as ModelAlias[];
+              const { next } = restoreModelToCatalog(currentModels, toRestore);
+
+              try {
+                await updateApiKeyModels(latestResource, next);
+              } catch (writeErr) {
+                // 写回失败：把 catalog 挂起放回去
+                mergeSuspendedCatalog(apiBase, resourceId, row.modelId, toRestore);
+                throw writeErr;
+              }
+
+              setCatalogSuspendTick((n) => n + 1);
+              await workbenchRef.current.refetch();
+              await syncMappingsAfterToggle(row, true);
+            });
+          } catch (err) {
+            showNotification(
+              `${t('modelsPage.access.saveFailed', {
+                defaultValue: 'Failed to update model access',
+              })}: ${getErrorMessage(err)}`,
+              'error'
+            );
+            setCatalogSuspendTick((n) => n + 1);
+          } finally {
+            setRowPending(row.key, false);
+          }
+          return;
+        }
 
         const raw = resource.raw as GeminiKeyConfig | ProviderKeyConfig;
         const baseList =
@@ -477,7 +608,7 @@ export function useModelAccessList(): UseModelAccessListResult {
         }
       }
     },
-    [disableControls, showNotification, syncMappingsAfterToggle, t]
+    [apiBase, disableControls, showNotification, syncMappingsAfterToggle, t]
   );
 
   const refresh = useCallback(async () => {

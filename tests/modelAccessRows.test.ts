@@ -143,7 +143,7 @@ describe('modelAccessRows', () => {
     });
   });
 
-  test('marks openaiCompatibility as unsupported for excludes', () => {
+  test('openaiCompatibility uses catalog disable mode and stays toggleable', () => {
     const resource = makeResource({
       id: 'openaiCompatibility:0:proxy',
       brand: 'openaiCompatibility',
@@ -162,10 +162,74 @@ describe('modelAccessRows', () => {
 
     expect(rows[0]).toMatchObject({
       enabled: true,
-      supportsExclude: false,
-      toggleDisabled: true,
-      lockReason: 'unsupported',
+      supportsExclude: true,
+      toggleDisabled: false,
+      lockReason: null,
+      disableMode: 'catalog',
     });
+  });
+
+  test('openaiCompatibility shows suspended catalog models as disabled rows', () => {
+    const resource = makeResource({
+      id: 'openaiCompatibility:0:proxy',
+      brand: 'openaiCompatibility',
+      name: 'proxy',
+      identifier: 'proxy',
+      models: ['gpt-5'],
+      disabled: false,
+      selector: { brand: 'openaiCompatibility', name: 'proxy', index: 0 },
+      raw: {
+        name: 'proxy',
+        baseUrl: 'https://x',
+        apiKeyEntries: [],
+        models: [{ name: 'gpt-5' }],
+      },
+    });
+
+    const rows = buildApiKeyAccessRows({
+      resource,
+      providerLabel: 'OpenAI Compatibility · proxy',
+      suspendedCatalogModelIds: ['gpt-4o', 'gpt-5'],
+    });
+
+    // gpt-5 still in models[] → active enabled row; gpt-4o only suspended
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.modelId === 'gpt-5')).toMatchObject({
+      enabled: true,
+      disableMode: 'catalog',
+    });
+    expect(rows.find((r) => r.modelId === 'gpt-4o')).toMatchObject({
+      enabled: false,
+      toggleDisabled: false,
+      disableMode: 'catalog',
+    });
+  });
+
+  test('openaiCompatibility entry-disabled locks active and suspended rows', () => {
+    const resource = makeResource({
+      id: 'openaiCompatibility:0:proxy',
+      brand: 'openaiCompatibility',
+      name: 'proxy',
+      models: ['gpt-5'],
+      disabled: true,
+      selector: { brand: 'openaiCompatibility', name: 'proxy', index: 0 },
+      raw: {
+        name: 'proxy',
+        baseUrl: 'https://x',
+        apiKeyEntries: [],
+        models: [{ name: 'gpt-5' }],
+        disabled: true,
+      },
+    });
+
+    const rows = buildApiKeyAccessRows({
+      resource,
+      providerLabel: 'proxy',
+      suspendedCatalogModelIds: ['o1'],
+    });
+
+    expect(rows.every((r) => r.toggleDisabled && r.lockReason === 'entry-disabled')).toBe(true);
+    expect(rows.every((r) => r.enabled === false)).toBe(true);
   });
 
   test('sorts api key before oauth and by provider/name', () => {

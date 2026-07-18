@@ -1,5 +1,7 @@
 /**
  * 模型禁用 Tab 的扁平行：OAuth 定义 + API Key 配置 models
+ *
+ * OpenAI Compatibility 无 excludedModels：用 models[] 摘除 + catalog 挂起模拟按模型禁用。
  */
 
 import {
@@ -15,6 +17,13 @@ import type { ProviderBrand, ProviderResource } from '@/features/providers/types
 export type ModelAccessSource = 'oauth' | 'apiKey';
 
 export type ModelAccessLockReason = 'wildcard' | 'entry-disabled' | 'unsupported' | null;
+
+/**
+ * 禁用写回策略：
+ * - exclude：写 excludedModels（大多数 API Key 品牌）
+ * - catalog：从 models[] 移除并挂起（openaiCompatibility）
+ */
+export type ModelAccessDisableMode = 'exclude' | 'catalog';
 
 export type ModelAccessRow = {
   key: string;
@@ -32,6 +41,7 @@ export type ModelAccessRow = {
   oauthChannel?: string;
   resourceId?: string;
   brand?: ProviderBrand;
+  disableMode?: ModelAccessDisableMode;
 };
 
 export type BuildOAuthRowsInput = {
@@ -46,6 +56,11 @@ export type BuildApiKeyRowsInput = {
   resource: ProviderResource;
   providerLabel: string;
   iconSrc?: string | null;
+  /**
+   * OpenAI Compatibility：已被 catalog 挂起（从 models[] 摘掉）的模型 id 列表。
+   * 会作为 enabled=false 的行展示，以便再次启用。
+   */
+  suspendedCatalogModelIds?: string[];
 };
 
 const getRuleKey = (value: string): string => value.trim().toLowerCase();
@@ -114,61 +129,91 @@ export function buildOAuthAccessRows(input: BuildOAuthRowsInput): ModelAccessRow
 }
 
 export function buildApiKeyAccessRows(input: BuildApiKeyRowsInput): ModelAccessRow[] {
-  const { resource, providerLabel, iconSrc } = input;
-  const supportsExclude = resource.brand !== 'openaiCompatibility';
+  const { resource, providerLabel, iconSrc, suspendedCatalogModelIds = [] } = input;
+  const usesCatalogDisable = resource.brand === 'openaiCompatibility';
+  const supportsExclude = true;
+  const disableMode: ModelAccessDisableMode = usesCatalogDisable ? 'catalog' : 'exclude';
   const models = resource.models ?? [];
-  if (models.length === 0) return [];
+  const entryDisabled = resource.disabled === true;
 
   const raw = resource.raw as GeminiKeyConfig | ProviderKeyConfig | { excludedModels?: string[] };
-  const excludedModels = supportsExclude
-    ? stripDisableAllModelsRule(
+  const excludedModels = usesCatalogDisable
+    ? []
+    : stripDisableAllModelsRule(
         Array.isArray((raw as { excludedModels?: string[] }).excludedModels)
           ? (raw as { excludedModels?: string[] }).excludedModels
           : []
-      )
+      );
+
+  const activeIds = models.map((name) => String(name ?? '').trim()).filter(Boolean);
+  const activeKeySet = new Set(activeIds.map(getRuleKey));
+
+  // Catalog-suspended models that are no longer in models[] still need a row to re-enable.
+  const suspendedIds = usesCatalogDisable
+    ? suspendedCatalogModelIds
+        .map((id) => String(id ?? '').trim())
+        .filter((id) => id && !activeKeySet.has(getRuleKey(id)))
     : [];
-  const entryDisabled = resource.disabled === true;
 
-  return models
-    .map((name) => String(name ?? '').trim())
-    .filter(Boolean)
-    .map((modelId) => {
-      const exactExcluded = isExactExcluded(modelId, excludedModels);
+  if (activeIds.length === 0 && suspendedIds.length === 0) return [];
 
-      let enabled: boolean;
-      let toggleDisabled: boolean;
-      let lockReason: ModelAccessLockReason;
+  const rows: ModelAccessRow[] = [];
 
-      if (!supportsExclude) {
-        enabled = true;
-        toggleDisabled = true;
-        lockReason = 'unsupported';
-      } else if (entryDisabled) {
-        enabled = false;
-        toggleDisabled = true;
-        lockReason = 'entry-disabled';
-      } else {
-        enabled = !exactExcluded;
-        toggleDisabled = false;
-        lockReason = null;
-      }
+  activeIds.forEach((modelId) => {
+    const exactExcluded = usesCatalogDisable ? false : isExactExcluded(modelId, excludedModels);
 
-      return {
-        key: `apiKey:${resource.id}:${getRuleKey(modelId)}`,
-        source: 'apiKey' as const,
-        modelId,
-        displayName: modelId,
-        providerLabel,
-        channelOrBrand: resource.brand,
-        enabled,
-        iconSrc: iconSrc ?? null,
-        supportsExclude,
-        toggleDisabled,
-        lockReason,
-        resourceId: resource.id,
-        brand: resource.brand,
-      };
+    let enabled: boolean;
+    let toggleDisabled: boolean;
+    let lockReason: ModelAccessLockReason;
+
+    if (entryDisabled) {
+      enabled = false;
+      toggleDisabled = true;
+      lockReason = 'entry-disabled';
+    } else {
+      enabled = !exactExcluded;
+      toggleDisabled = false;
+      lockReason = null;
+    }
+
+    rows.push({
+      key: `apiKey:${resource.id}:${getRuleKey(modelId)}`,
+      source: 'apiKey',
+      modelId,
+      displayName: modelId,
+      providerLabel,
+      channelOrBrand: resource.brand,
+      enabled,
+      iconSrc: iconSrc ?? null,
+      supportsExclude,
+      toggleDisabled,
+      lockReason,
+      resourceId: resource.id,
+      brand: resource.brand,
+      disableMode,
     });
+  });
+
+  suspendedIds.forEach((modelId) => {
+    rows.push({
+      key: `apiKey:${resource.id}:${getRuleKey(modelId)}`,
+      source: 'apiKey',
+      modelId,
+      displayName: modelId,
+      providerLabel,
+      channelOrBrand: resource.brand,
+      enabled: false,
+      iconSrc: iconSrc ?? null,
+      supportsExclude,
+      toggleDisabled: entryDisabled,
+      lockReason: entryDisabled ? 'entry-disabled' : null,
+      resourceId: resource.id,
+      brand: resource.brand,
+      disableMode,
+    });
+  });
+
+  return rows;
 }
 
 export function sortModelAccessRows(rows: ModelAccessRow[]): ModelAccessRow[] {
