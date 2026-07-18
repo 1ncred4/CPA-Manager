@@ -51,7 +51,6 @@ import {
   toAliasKey,
   type FederatedMappingRow,
   type MappingPickerOption,
-  type MappingTargetRef,
   type UnmappedModelRow,
 } from './modelMapping';
 import { updateApiKeyModels } from './updateApiKeyModels';
