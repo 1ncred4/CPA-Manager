@@ -153,18 +153,25 @@ export function ModelMappingList({ list }: ModelMappingListProps) {
                       target.displayName !== target.modelId
                         ? `${target.displayName} (${target.modelId})`
                         : target.modelId;
+                    const isDimmed = target.suspended || !target.currentlyEnabled;
+                    const title = target.suspended
+                      ? t('modelsPage.mapping.targetSuspendedHint', {
+                          defaultValue: '{{label}}（已挂起：模型禁用时摘除，启用后恢复）',
+                          label: `${target.providerLabel} · ${label}`,
+                        })
+                      : target.currentlyEnabled
+                        ? `${target.providerLabel} · ${label}`
+                        : t('modelsPage.mapping.targetDisabledHint', {
+                            defaultValue: '{{label}}（当前已禁用）',
+                            label: `${target.providerLabel} · ${label}`,
+                          });
                     return (
                       <span
                         key={key}
-                        className={`${styles.tag} ${target.currentlyEnabled ? '' : styles.tagDisabled}`}
-                        title={
-                          target.currentlyEnabled
-                            ? `${target.providerLabel} · ${label}`
-                            : t('modelsPage.mapping.targetDisabledHint', {
-                                defaultValue: '{{label}}（当前已禁用）',
-                                label: `${target.providerLabel} · ${label}`,
-                              })
-                        }
+                        className={`${styles.tag} ${isDimmed ? styles.tagDisabled : ''} ${
+                          target.suspended ? styles.tagSuspended : ''
+                        }`}
+                        title={title}
                       >
                         {target.iconSrc ? (
                           <img src={target.iconSrc} alt="" className={styles.tagIcon} />
@@ -173,6 +180,13 @@ export function ModelMappingList({ list }: ModelMappingListProps) {
                           {target.displayName || target.modelId}
                         </span>
                         <span className={styles.tagProvider}>{target.providerLabel}</span>
+                        {target.suspended ? (
+                          <span className={styles.tagBadge}>
+                            {t('modelsPage.mapping.suspendedBadge', {
+                              defaultValue: '挂起',
+                            })}
+                          </span>
+                        ) : null}
                       </span>
                     );
                   })}

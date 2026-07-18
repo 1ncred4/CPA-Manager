@@ -32,6 +32,11 @@ export type MappingTarget = MappingTargetRef & {
   iconSrc?: string | null;
   /** 目标当前是否仍在「已启用」集合中（映射可能残留在已禁用模型上） */
   currentlyEnabled: boolean;
+  /**
+   * 因模型禁用而被管理端剪枝、本地挂起的目标。
+   * 仍展示在映射列表中（灰标），启用模型后会写回真实配置。
+   */
+  suspended?: boolean;
 };
 
 export type FederatedMappingRow = {

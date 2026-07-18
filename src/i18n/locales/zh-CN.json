@@ -1545,7 +1545,11 @@
       "oauthLoadFailed": "加载 OAuth 模型禁用规则失败。",
       "toggleAria": "切换 {{model}}",
       "sectionApiKey": "API Key 提供商",
-      "sectionOauth": "OAuth 提供商"
+      "sectionOauth": "OAuth 提供商",
+      "mappingPruned": "已从 {{count}} 个映射中摘除该模型，重新启用时会自动恢复",
+      "mappingRestored": "已恢复 {{count}} 个映射目标",
+      "mappingPruneFailed": "模型已禁用，但摘除映射失败",
+      "mappingRestoreFailed": "模型已启用，但恢复映射失败"
     },
     "mapping": {
       "add": "添加映射",
@@ -1581,6 +1585,8 @@
       "targetsEmpty": "暂无已启用的模型可选",
       "targetsEmptyDesc": "请先在「模型禁用」中启用模型，或在 AI 提供商中配置模型列表。",
       "targetDisabledHint": "{{label}}（当前已禁用）",
+      "targetSuspendedHint": "{{label}}（已挂起：模型禁用时摘除，启用后恢复）",
+      "suspendedBadge": "挂起",
       "disabledTarget": "已禁用目标",
       "save": "保存",
       "saveSuccess": "映射已保存",

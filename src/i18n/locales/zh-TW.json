@@ -1571,7 +1571,11 @@
       "oauthLoadFailed": "載入 OAuth 模型停用規則失敗。",
       "toggleAria": "切換 {{model}}",
       "sectionApiKey": "API Key 供應商",
-      "sectionOauth": "OAuth 供應商"
+      "sectionOauth": "OAuth 供應商",
+      "mappingPruned": "已從 {{count}} 個對應中移除該模型，重新啟用時會自動還原",
+      "mappingRestored": "已還原 {{count}} 個對應目標",
+      "mappingPruneFailed": "模型已停用，但移除對應失敗",
+      "mappingRestoreFailed": "模型已啟用，但還原對應失敗"
     },
     "mapping": {
       "add": "新增對應",
@@ -1607,6 +1611,8 @@
       "targetsEmpty": "尚無已啟用的模型可選",
       "targetsEmptyDesc": "請先在「模型停用」中啟用模型，或在 AI 供應商中設定模型清單。",
       "targetDisabledHint": "{{label}}（目前已停用）",
+      "targetSuspendedHint": "{{label}}（已暫停：模型停用時移除，啟用後還原）",
+      "suspendedBadge": "暫停",
       "disabledTarget": "已停用目標",
       "save": "儲存",
       "saveSuccess": "對應已儲存",

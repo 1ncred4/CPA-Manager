@@ -1545,7 +1545,11 @@
       "oauthLoadFailed": "Failed to load OAuth model exclusion rules.",
       "toggleAria": "Toggle {{model}}",
       "sectionApiKey": "API Key providers",
-      "sectionOauth": "OAuth providers"
+      "sectionOauth": "OAuth providers",
+      "mappingPruned": "Detached {{count}} mapping target(s); will restore when re-enabled",
+      "mappingRestored": "Restored {{count}} mapping target(s)",
+      "mappingPruneFailed": "Model disabled, but failed to detach mapping targets",
+      "mappingRestoreFailed": "Model enabled, but failed to restore mapping targets"
     },
     "mapping": {
       "add": "Add mapping",
@@ -1581,6 +1585,8 @@
       "targetsEmpty": "No enabled models available",
       "targetsEmptyDesc": "Enable models in the Disabled models tab, or configure models on AI Providers.",
       "targetDisabledHint": "{{label}} (currently disabled)",
+      "targetSuspendedHint": "{{label}} (suspended: removed while model is disabled; restores on enable)",
+      "suspendedBadge": "Suspended",
       "disabledTarget": "Disabled target",
       "save": "Save",
       "saveSuccess": "Mapping saved",

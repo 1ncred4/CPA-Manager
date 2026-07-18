@@ -1523,7 +1523,11 @@
       "oauthLoadFailed": "Не удалось загрузить правила отключения OAuth-моделей.",
       "toggleAria": "Переключить {{model}}",
       "sectionApiKey": "Провайдеры API Key",
-      "sectionOauth": "Провайдеры OAuth"
+      "sectionOauth": "Провайдеры OAuth",
+      "mappingPruned": "Отвязано целей сопоставления: {{count}}; восстановится при повторном включении",
+      "mappingRestored": "Восстановлено целей сопоставления: {{count}}",
+      "mappingPruneFailed": "Модель отключена, но не удалось отвязать сопоставления",
+      "mappingRestoreFailed": "Модель включена, но не удалось восстановить сопоставления"
     },
     "mapping": {
       "add": "Добавить сопоставление",
@@ -1559,6 +1563,8 @@
       "targetsEmpty": "Нет включённых моделей",
       "targetsEmptyDesc": "Сначала включите модели на вкладке отключения или настройте их у AI Providers.",
       "targetDisabledHint": "{{label}} (сейчас отключено)",
+      "targetSuspendedHint": "{{label}} (приостановлено: снято при отключении модели, восстановится при включении)",
+      "suspendedBadge": "Пауза",
       "disabledTarget": "Отключённая цель",
       "save": "Сохранить",
       "saveSuccess": "Сопоставление сохранено",

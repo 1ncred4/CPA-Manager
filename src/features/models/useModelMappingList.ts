@@ -14,7 +14,7 @@ import {
 } from '@/features/authFiles/constants';
 import { PROVIDER_LOGOS } from '@/features/providers/brandLogos';
 import { useProviderWorkbench } from '@/features/providers/useProviderWorkbench';
-import type { ProviderResource } from '@/features/providers/types';
+import type { ProviderBrand, ProviderResource } from '@/features/providers/types';
 import type { ModelAlias, OAuthModelAliasEntry } from '@/types';
 import { getErrorMessage } from '@/utils/helpers';
 import {
@@ -23,6 +23,12 @@ import {
   collectOAuthChannels,
   type ModelAccessRow,
 } from './modelAccessRows';
+import {
+  clearSuspendedForAlias,
+  listAllSuspended,
+  mergeSuspendedIntoFederatedRows,
+  SUSPENDED_MAPPINGS_CHANGED_EVENT,
+} from './mappingSuspend';
 import {
   applyApiKeyModelAliasChanges,
   applyOauthAliasTargetChanges,
@@ -71,6 +77,7 @@ export function useModelMappingList(): UseModelMappingListResult {
   const showNotification = useNotificationStore((s) => s.showNotification);
   const showConfirmation = useNotificationStore((s) => s.showConfirmation);
   const connectionStatus = useAuthStore((s) => s.connectionStatus);
+  const apiBase = useAuthStore((s) => s.apiBase);
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
   const workbench = useProviderWorkbench();
 
@@ -83,6 +90,8 @@ export function useModelMappingList(): UseModelMappingListResult {
   const [oauthModels, setOauthModels] = useState<Record<string, AuthFileModelItem[]>>({});
   const [excluded, setExcluded] = useState<Record<string, string[]>>({});
   const [accessRows, setAccessRows] = useState<ModelAccessRow[]>([]);
+  /** 递增以在同页剪枝/恢复后重读 localStorage 挂起项 */
+  const [suspendedEpoch, setSuspendedEpoch] = useState(0);
 
   const loadRequestRef = useRef(0);
   const workbenchRef = useRef(workbench);
@@ -211,6 +220,25 @@ export function useModelMappingList(): UseModelMappingListResult {
     };
   }, [loadAll]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onSuspendedChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ apiBase?: string }>).detail;
+      if (detail?.apiBase && detail.apiBase !== apiBase) return;
+      setSuspendedEpoch((n) => n + 1);
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key || !event.key.includes('suspended-model-mappings')) return;
+      setSuspendedEpoch((n) => n + 1);
+    };
+    window.addEventListener(SUSPENDED_MAPPINGS_CHANGED_EVENT, onSuspendedChanged);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(SUSPENDED_MAPPINGS_CHANGED_EVENT, onSuspendedChanged);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [apiBase]);
+
   // Rebuild access rows when theme/resources change without full reload
   useEffect(() => {
     if (loading) return;
@@ -251,7 +279,7 @@ export function useModelMappingList(): UseModelMappingListResult {
 
   const rows = useMemo(() => {
     const oauthDisplayNames = buildOauthDisplayNameMap(oauthModels);
-    return buildFederatedMappingRows({
+    const baseRows = buildFederatedMappingRows({
       modelAlias,
       resources: allApiKeyResources,
       oauthDisplayNames,
@@ -274,7 +302,46 @@ export function useModelMappingList(): UseModelMappingListResult {
         },
       },
     });
-  }, [allApiKeyResources, enabledKeySet, modelAlias, oauthModels, resolvedTheme, t]);
+
+    void suspendedEpoch;
+    const suspended = listAllSuspended(apiBase);
+    const resourceById = new Map(allApiKeyResources.map((r) => [r.id, r]));
+    const apiKeyProviderLabel = (resourceId: string, brand: ProviderBrand) => {
+      const resource = resourceById.get(resourceId);
+      const brandLabel = t(`providersPage.providerNames.${brand}`, {
+        defaultValue: brand,
+      });
+      if (!resource) return brandLabel;
+      const entryLabel = resource.name ?? resource.identifier;
+      return entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
+    };
+    const apiKeyIcon = (resourceId: string, brand: ProviderBrand) => {
+      const resource = resourceById.get(resourceId);
+      const logo = PROVIDER_LOGOS[resource?.brand ?? brand];
+      return resolvedTheme === 'dark' && logo?.darkSrc ? logo.darkSrc : (logo?.src ?? null);
+    };
+
+    return mergeSuspendedIntoFederatedRows(baseRows, suspended, {
+      oauthDisplayNames,
+      providerLabels: {
+        oauth: (channel) => getTypeLabel(t, channel),
+        apiKey: apiKeyProviderLabel,
+      },
+      icons: {
+        oauth: (channel) => getAuthFileIcon(channel, resolvedTheme),
+        apiKey: apiKeyIcon,
+      },
+    });
+  }, [
+    allApiKeyResources,
+    apiBase,
+    enabledKeySet,
+    modelAlias,
+    oauthModels,
+    resolvedTheme,
+    suspendedEpoch,
+    t,
+  ]);
 
   const filteredRows = useMemo(
     () => filterFederatedMappingRows(rows, search),
@@ -311,16 +378,21 @@ export function useModelMappingList(): UseModelMappingListResult {
         confirmText: t('common.confirm'),
         onConfirm: async () => {
           try {
-            const baselineTargets: MappingTargetRef[] = row.targets.map((target) =>
-              target.source === 'oauth'
-                ? { source: 'oauth', channel: target.channel, modelId: target.modelId }
-                : {
-                    source: 'apiKey',
-                    resourceId: target.resourceId,
-                    brand: target.brand,
-                    modelId: target.modelId,
-                  }
-            );
+            // 仅清理真实配置中的目标；挂起灰标一并丢弃
+            const baselineTargets: MappingTargetRef[] = row.targets
+              .filter((target) => !target.suspended)
+              .map((target) =>
+                target.source === 'oauth'
+                  ? { source: 'oauth', channel: target.channel, modelId: target.modelId }
+                  : {
+                      source: 'apiKey',
+                      resourceId: target.resourceId,
+                      brand: target.brand,
+                      modelId: target.modelId,
+                    }
+              );
+
+            clearSuspendedForAlias(apiBase, row.alias);
 
             // OAuth: clear alias from every involved channel
             const oauthChannels = new Set(
@@ -389,7 +461,7 @@ export function useModelMappingList(): UseModelMappingListResult {
         },
       });
     },
-    [loadAll, rows, showConfirmation, showNotification, t]
+    [apiBase, loadAll, rows, showConfirmation, showNotification, t]
   );
 
   return {

@@ -32,6 +32,12 @@ import {
   type ModelAccessRow,
 } from './modelAccessRows';
 import { updateApiKeyExcludedModels } from './updateApiKeyExcludedModels';
+import { targetRefFromAccessRow } from './mappingSuspend';
+import {
+  pruneMappingsForDisabledTarget,
+  restoreMappingsForEnabledTarget,
+  type MappingSyncResult,
+} from './syncMappingOnAccessToggle';
 
 export type UseModelAccessListResult = {
   rows: ModelAccessRow[];
@@ -73,6 +79,7 @@ export function useModelAccessList(): UseModelAccessListResult {
   const { t } = useTranslation();
   const showNotification = useNotificationStore((s) => s.showNotification);
   const connectionStatus = useAuthStore((s) => s.connectionStatus);
+  const apiBase = useAuthStore((s) => s.apiBase);
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
   const workbench = useProviderWorkbench();
 
@@ -292,6 +299,85 @@ export function useModelAccessList(): UseModelAccessListResult {
     });
   };
 
+  const notifyMappingSync = useCallback(
+    (sync: MappingSyncResult, mode: 'prune' | 'restore') => {
+      if (sync.failed) {
+        showNotification(
+          `${t(
+            mode === 'prune'
+              ? 'modelsPage.access.mappingPruneFailed'
+              : 'modelsPage.access.mappingRestoreFailed',
+            {
+              defaultValue:
+                mode === 'prune'
+                  ? 'Model disabled, but failed to detach mapping targets'
+                  : 'Model enabled, but failed to restore mapping targets',
+            }
+          )}: ${sync.errorMessage ?? ''}`.trim(),
+          'warning'
+        );
+        return;
+      }
+      if (mode === 'prune' && sync.pruned > 0) {
+        showNotification(
+          t('modelsPage.access.mappingPruned', {
+            defaultValue: 'Detached {{count}} mapping target(s); will restore when re-enabled',
+            count: sync.pruned,
+          }),
+          'success'
+        );
+        return;
+      }
+      if (mode === 'restore' && sync.restored > 0) {
+        showNotification(
+          t('modelsPage.access.mappingRestored', {
+            defaultValue: 'Restored {{count}} mapping target(s)',
+            count: sync.restored,
+          }),
+          'success'
+        );
+      }
+    },
+    [showNotification, t]
+  );
+
+  const syncMappingsAfterToggle = useCallback(
+    async (row: ModelAccessRow, enabled: boolean) => {
+      const target = targetRefFromAccessRow(row);
+      if (!target) return;
+
+      if (enabled) {
+        // 启用后 API Key 资源可能刚 refetch；用最新 resources
+        const resources =
+          workbenchRef.current.snapshot?.groups.flatMap((g) => g.resources) ??
+          resourcesRef.current;
+        const sync = await restoreMappingsForEnabledTarget({
+          apiBase,
+          target,
+          resources,
+        });
+        notifyMappingSync(sync, 'restore');
+        if (sync.restored > 0 && target.source === 'apiKey') {
+          await workbenchRef.current.refetch();
+        }
+        return;
+      }
+
+      const resources =
+        workbenchRef.current.snapshot?.groups.flatMap((g) => g.resources) ?? resourcesRef.current;
+      const sync = await pruneMappingsForDisabledTarget({
+        apiBase,
+        target,
+        resources,
+      });
+      notifyMappingSync(sync, 'prune');
+      if (sync.pruned > 0 && target.source === 'apiKey') {
+        await workbenchRef.current.refetch();
+      }
+    },
+    [apiBase, notifyMappingSync]
+  );
+
   const toggleRow = useCallback(
     async (row: ModelAccessRow, enabled: boolean) => {
       if (disableControls || row.toggleDisabled || !row.supportsExclude) return;
@@ -326,6 +412,8 @@ export function useModelAccessList(): UseModelAccessListResult {
               delete rest[channel];
               excludedRef.current = rest;
             }
+
+            await syncMappingsAfterToggle(row, enabled);
           });
         } catch (err) {
           setExcluded((prev) => ({ ...prev, [channel]: snapshotBefore }));
@@ -373,6 +461,7 @@ export function useModelAccessList(): UseModelAccessListResult {
 
             await updateApiKeyExcludedModels(latestResource, finalList);
             await workbenchRef.current.refetch();
+            await syncMappingsAfterToggle(row, enabled);
           });
         } catch (err) {
           setApiKeyExcludedOverrides((prev) => ({ ...prev, [resourceId]: previousList }));
@@ -388,7 +477,7 @@ export function useModelAccessList(): UseModelAccessListResult {
         }
       }
     },
-    [disableControls, showNotification, t]
+    [disableControls, showNotification, syncMappingsAfterToggle, t]
   );
 
   const refresh = useCallback(async () => {
