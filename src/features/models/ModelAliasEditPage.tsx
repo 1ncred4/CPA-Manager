@@ -64,6 +64,7 @@ export function ModelAliasEditPage() {
   const disableControls = connectionStatus !== 'connected';
 
   const aliasFromParams = (searchParams.get('alias') ?? '').trim();
+  const preselectFromParams = (searchParams.get('preselect') ?? '').trim();
   const isEditing = Boolean(aliasFromParams);
 
   const [initialLoading, setInitialLoading] = useState(true);
@@ -297,7 +298,14 @@ export function ModelAliasEditPage() {
         setAlias('');
         setBaselineAlias('');
         setBaselineTargets([]);
-        setSelectedKeys(new Set());
+        const preselected = new Set<string>();
+        if (preselectFromParams) {
+          const optionKeys = new Set(options.map((opt) => mappingTargetKey(opt)));
+          if (optionKeys.has(preselectFromParams)) {
+            preselected.add(preselectFromParams);
+          }
+        }
+        setSelectedKeys(preselected);
       }
     } catch (err: unknown) {
       if (requestId === loadRequestRef.current) {
@@ -308,7 +316,7 @@ export function ModelAliasEditPage() {
         setInitialLoading(false);
       }
     }
-  }, [aliasFromParams, resolvedTheme, t]);
+  }, [aliasFromParams, preselectFromParams, resolvedTheme, t]);
 
   useEffect(() => {
     void loadInitialData();

@@ -1584,8 +1584,19 @@
       "columns": {
         "alias": "自訂模型名",
         "targets": "對應目標",
-        "actions": "操作"
+        "actions": "操作",
+        "model": "模型",
+        "provider": "供應商"
       },
+      "mappedSectionTitle": "已對應",
+      "unmappedSectionTitle": "未對應模型",
+      "unmappedCount": "{{shown}} / {{total}} 個模型",
+      "unmappedEmptyTitle": "沒有未對應模型",
+      "unmappedEmptyDesc": "目前目錄中的模型都已分配到某個自訂名稱。",
+      "unmappedNoSearchResults": "沒有符合的未對應模型",
+      "unmappedDisabledHint": "請先在「模型停用」中啟用該模型",
+      "mapAction": "新增對應",
+      "modelDisabled": "已停用",
       "createTitle": "新增模型對應",
       "editTitle": "編輯模型對應",
       "aliasLabel": "自訂模型名",

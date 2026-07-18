@@ -2,7 +2,7 @@
  * 模型管理：模型禁用 + 联邦模型映射
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
@@ -22,7 +22,8 @@ export function ModelsPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const pageTransitionLayer = usePageTransitionLayer();
-  const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.status === 'current' : true;
+  const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.isCurrentLayer : true;
+  const wasCurrentLayerRef = useRef(isCurrentLayer);
 
   const tabParam = searchParams.get('tab');
   const [tab, setTabState] = useState<ModelsTab>(() =>
@@ -46,6 +47,16 @@ export function ModelsPage() {
   }, [refreshModelAccess, refreshModelMapping]);
 
   useHeaderRefresh(handleRefresh, isCurrentLayer);
+
+  // PageTransition keeps ModelsPage mounted under the edit layer. Refresh when
+  // this layer becomes current again so create/edit results show without a hard reload.
+  useEffect(() => {
+    const wasCurrent = wasCurrentLayerRef.current;
+    wasCurrentLayerRef.current = isCurrentLayer;
+    if (!wasCurrent && isCurrentLayer) {
+      void handleRefresh();
+    }
+  }, [handleRefresh, isCurrentLayer]);
 
   const setTab = (next: ModelsTab) => {
     setTabState(next);

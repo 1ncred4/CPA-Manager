@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { IconPencil, IconPlus, IconTrash2 } from '@/components/ui/icons';
+import { mappingTargetKey } from './modelMapping';
 import type { useModelMappingList } from './useModelMappingList';
 import styles from './ModelMappingList.module.scss';
 
@@ -17,6 +18,8 @@ export function ModelMappingList({ list }: ModelMappingListProps) {
   const {
     rows,
     filteredRows,
+    unmappedRows,
+    filteredUnmappedRows,
     search,
     setSearch,
     loading,
@@ -26,7 +29,7 @@ export function ModelMappingList({ list }: ModelMappingListProps) {
     refresh,
   } = list;
 
-  if (loading && rows.length === 0) {
+  if (loading && rows.length === 0 && unmappedRows.length === 0) {
     return (
       <div className={styles.root}>
         <div className={styles.loadingWrap}>
@@ -89,108 +92,222 @@ export function ModelMappingList({ list }: ModelMappingListProps) {
         </Button>
       </div>
 
-      {rows.length === 0 ? (
-        <div className={styles.emptyWrap}>
-          <EmptyState
-            title={t('modelsPage.mapping.emptyTitle', { defaultValue: '暂无模型映射' })}
-            description={t('modelsPage.mapping.emptyDesc', {
-              defaultValue: '将自定义模型名映射到一个或多个已启用的提供商模型。',
+      <section className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h2 className={styles.sectionTitle}>
+            {t('modelsPage.mapping.mappedSectionTitle', { defaultValue: '已映射' })}
+          </h2>
+          <div className={styles.sectionMeta}>
+            {t('modelsPage.mapping.count', {
+              defaultValue: '{{shown}} / {{total}} 个映射',
+              shown: filteredRows.length,
+              total: rows.length,
             })}
-            action={
-              <Button
-                size="sm"
-                disabled={disableControls}
-                onClick={() => navigate('/models/mapping', { state: { fromModels: true } })}
-              >
-                {t('modelsPage.mapping.add', { defaultValue: '添加映射' })}
-              </Button>
-            }
-          />
-        </div>
-      ) : filteredRows.length === 0 ? (
-        <div className={styles.emptyWrap}>
-          <EmptyState
-            title={t('modelsPage.mapping.noSearchResults', {
-              defaultValue: '没有匹配的映射',
-            })}
-          />
-        </div>
-      ) : (
-        <div className={styles.table}>
-          <div className={styles.header}>
-            <div>{t('modelsPage.mapping.columns.alias', { defaultValue: '自定义模型名' })}</div>
-            <div>{t('modelsPage.mapping.columns.targets', { defaultValue: '映射目标' })}</div>
-            <div style={{ textAlign: 'right' }}>
-              {t('modelsPage.mapping.columns.actions', { defaultValue: '操作' })}
-            </div>
           </div>
-          {filteredRows.map((row) => (
-            <div key={row.aliasKey} className={styles.row}>
-              <div className={styles.aliasCell} title={row.alias}>
-                {row.alias}
+        </div>
+
+        {rows.length === 0 ? (
+          <div className={styles.emptyWrap}>
+            <EmptyState
+              title={t('modelsPage.mapping.emptyTitle', { defaultValue: '暂无模型映射' })}
+              description={t('modelsPage.mapping.emptyDesc', {
+                defaultValue: '将自定义模型名映射到一个或多个已启用的提供商模型。',
+              })}
+              action={
+                <Button
+                  size="sm"
+                  disabled={disableControls}
+                  onClick={() => navigate('/models/mapping', { state: { fromModels: true } })}
+                >
+                  {t('modelsPage.mapping.add', { defaultValue: '添加映射' })}
+                </Button>
+              }
+            />
+          </div>
+        ) : filteredRows.length === 0 ? (
+          <div className={styles.emptyWrap}>
+            <EmptyState
+              title={t('modelsPage.mapping.noSearchResults', {
+                defaultValue: '没有匹配的映射',
+              })}
+            />
+          </div>
+        ) : (
+          <div className={styles.table}>
+            <div className={styles.header}>
+              <div>{t('modelsPage.mapping.columns.alias', { defaultValue: '自定义模型名' })}</div>
+              <div>{t('modelsPage.mapping.columns.targets', { defaultValue: '映射目标' })}</div>
+              <div style={{ textAlign: 'right' }}>
+                {t('modelsPage.mapping.columns.actions', { defaultValue: '操作' })}
               </div>
-              <div className={styles.targetsCell}>
-                {row.targets.map((target) => {
-                  const key =
-                    target.source === 'oauth'
-                      ? `oauth:${target.channel}:${target.modelId}`
-                      : `apiKey:${target.resourceId}:${target.modelId}`;
-                  const label =
-                    target.displayName !== target.modelId
-                      ? `${target.displayName} (${target.modelId})`
-                      : target.modelId;
-                  return (
-                    <span
-                      key={key}
-                      className={`${styles.tag} ${target.currentlyEnabled ? '' : styles.tagDisabled}`}
+            </div>
+            {filteredRows.map((row) => (
+              <div key={row.aliasKey} className={styles.row}>
+                <div className={styles.aliasCell} title={row.alias}>
+                  {row.alias}
+                </div>
+                <div className={styles.targetsCell}>
+                  {row.targets.map((target) => {
+                    const key = mappingTargetKey(target);
+                    const label =
+                      target.displayName !== target.modelId
+                        ? `${target.displayName} (${target.modelId})`
+                        : target.modelId;
+                    return (
+                      <span
+                        key={key}
+                        className={`${styles.tag} ${target.currentlyEnabled ? '' : styles.tagDisabled}`}
+                        title={
+                          target.currentlyEnabled
+                            ? `${target.providerLabel} · ${label}`
+                            : t('modelsPage.mapping.targetDisabledHint', {
+                                defaultValue: '{{label}}（当前已禁用）',
+                                label: `${target.providerLabel} · ${label}`,
+                              })
+                        }
+                      >
+                        {target.iconSrc ? (
+                          <img src={target.iconSrc} alt="" className={styles.tagIcon} />
+                        ) : null}
+                        <span className={styles.tagText}>
+                          {target.displayName || target.modelId}
+                        </span>
+                        <span className={styles.tagProvider}>{target.providerLabel}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+                <div className={styles.actionsCell}>
+                  <button
+                    type="button"
+                    className={styles.iconBtn}
+                    disabled={disableControls}
+                    title={t('common.edit')}
+                    aria-label={t('common.edit')}
+                    onClick={() =>
+                      navigate(`/models/mapping?alias=${encodeURIComponent(row.alias)}`, {
+                        state: { fromModels: true },
+                      })
+                    }
+                  >
+                    <IconPencil size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
+                    disabled={disableControls}
+                    title={t('common.delete')}
+                    aria-label={t('common.delete')}
+                    onClick={() => deleteAlias(row.alias)}
+                  >
+                    <IconTrash2 size={15} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h2 className={styles.sectionTitle}>
+            {t('modelsPage.mapping.unmappedSectionTitle', { defaultValue: '未映射模型' })}
+          </h2>
+          <div className={styles.sectionMeta}>
+            {t('modelsPage.mapping.unmappedCount', {
+              defaultValue: '{{shown}} / {{total}} 个模型',
+              shown: filteredUnmappedRows.length,
+              total: unmappedRows.length,
+            })}
+          </div>
+        </div>
+
+        {unmappedRows.length === 0 ? (
+          <div className={styles.emptyWrap}>
+            <EmptyState
+              title={t('modelsPage.mapping.unmappedEmptyTitle', {
+                defaultValue: '没有未映射模型',
+              })}
+              description={t('modelsPage.mapping.unmappedEmptyDesc', {
+                defaultValue: '当前目录中的模型都已分配到某个自定义名称。',
+              })}
+            />
+          </div>
+        ) : filteredUnmappedRows.length === 0 ? (
+          <div className={styles.emptyWrap}>
+            <EmptyState
+              title={t('modelsPage.mapping.unmappedNoSearchResults', {
+                defaultValue: '没有匹配的未映射模型',
+              })}
+            />
+          </div>
+        ) : (
+          <div className={styles.table}>
+            <div className={styles.unmappedHeader}>
+              <div>{t('modelsPage.mapping.columns.model', { defaultValue: '模型' })}</div>
+              <div>{t('modelsPage.mapping.columns.provider', { defaultValue: '提供商' })}</div>
+              <div style={{ textAlign: 'right' }}>
+                {t('modelsPage.mapping.columns.actions', { defaultValue: '操作' })}
+              </div>
+            </div>
+            {filteredUnmappedRows.map((row) => {
+              const key = mappingTargetKey(row);
+              return (
+                <div key={key} className={styles.unmappedRow}>
+                  <div className={styles.modelCell}>
+                    {row.iconSrc ? (
+                      <img src={row.iconSrc} alt="" className={styles.modelIcon} />
+                    ) : (
+                      <span className={styles.modelIconFallback} />
+                    )}
+                    <div className={styles.modelText}>
+                      <div className={styles.modelName} title={row.displayName || row.modelId}>
+                        {row.displayName || row.modelId}
+                      </div>
+                      {row.displayName && row.displayName !== row.modelId ? (
+                        <div className={styles.modelId} title={row.modelId}>
+                          {row.modelId}
+                        </div>
+                      ) : null}
+                      {!row.enabled ? (
+                        <div className={styles.disabledBadge}>
+                          {t('modelsPage.mapping.modelDisabled', { defaultValue: '已禁用' })}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className={styles.providerCell} title={row.providerLabel}>
+                    {row.providerLabel}
+                  </div>
+                  <div className={styles.actionsCell}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={disableControls || !row.enabled}
                       title={
-                        target.currentlyEnabled
-                          ? `${target.providerLabel} · ${label}`
-                          : t('modelsPage.mapping.targetDisabledHint', {
-                              defaultValue: '{{label}}（当前已禁用）',
-                              label: `${target.providerLabel} · ${label}`,
+                        row.enabled
+                          ? undefined
+                          : t('modelsPage.mapping.unmappedDisabledHint', {
+                              defaultValue: '请先在「模型禁用」中启用该模型',
                             })
                       }
+                      onClick={() =>
+                        navigate(
+                          `/models/mapping?preselect=${encodeURIComponent(key)}`,
+                          { state: { fromModels: true } }
+                        )
+                      }
                     >
-                      {target.iconSrc ? (
-                        <img src={target.iconSrc} alt="" className={styles.tagIcon} />
-                      ) : null}
-                      <span className={styles.tagText}>{target.displayName || target.modelId}</span>
-                      <span className={styles.tagProvider}>{target.providerLabel}</span>
-                    </span>
-                  );
-                })}
-              </div>
-              <div className={styles.actionsCell}>
-                <button
-                  type="button"
-                  className={styles.iconBtn}
-                  disabled={disableControls}
-                  title={t('common.edit')}
-                  aria-label={t('common.edit')}
-                  onClick={() =>
-                    navigate(`/models/mapping?alias=${encodeURIComponent(row.alias)}`, {
-                      state: { fromModels: true },
-                    })
-                  }
-                >
-                  <IconPencil size={15} />
-                </button>
-                <button
-                  type="button"
-                  className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
-                  disabled={disableControls}
-                  title={t('common.delete')}
-                  aria-label={t('common.delete')}
-                  onClick={() => deleteAlias(row.alias)}
-                >
-                  <IconTrash2 size={15} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+                      {t('modelsPage.mapping.mapAction', { defaultValue: '添加映射' })}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

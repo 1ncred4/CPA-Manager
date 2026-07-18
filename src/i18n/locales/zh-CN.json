@@ -1558,8 +1558,19 @@
       "columns": {
         "alias": "自定义模型名",
         "targets": "映射目标",
-        "actions": "操作"
+        "actions": "操作",
+        "model": "模型",
+        "provider": "提供商"
       },
+      "mappedSectionTitle": "已映射",
+      "unmappedSectionTitle": "未映射模型",
+      "unmappedCount": "{{shown}} / {{total}} 个模型",
+      "unmappedEmptyTitle": "没有未映射模型",
+      "unmappedEmptyDesc": "当前目录中的模型都已分配到某个自定义名称。",
+      "unmappedNoSearchResults": "没有匹配的未映射模型",
+      "unmappedDisabledHint": "请先在「模型禁用」中启用该模型",
+      "mapAction": "添加映射",
+      "modelDisabled": "已禁用",
       "createTitle": "添加模型映射",
       "editTitle": "编辑模型映射",
       "aliasLabel": "自定义模型名",

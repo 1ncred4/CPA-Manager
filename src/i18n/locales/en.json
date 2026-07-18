@@ -1558,8 +1558,19 @@
       "columns": {
         "alias": "Custom model name",
         "targets": "Targets",
-        "actions": "Actions"
+        "actions": "Actions",
+        "model": "Model",
+        "provider": "Provider"
       },
+      "mappedSectionTitle": "Mapped",
+      "unmappedSectionTitle": "Unmapped models",
+      "unmappedCount": "{{shown}} / {{total}} models",
+      "unmappedEmptyTitle": "No unmapped models",
+      "unmappedEmptyDesc": "Every model in the catalog is assigned to a custom name.",
+      "unmappedNoSearchResults": "No matching unmapped models",
+      "unmappedDisabledHint": "Enable this model in the Disabled models tab first",
+      "mapAction": "Add mapping",
+      "modelDisabled": "Disabled",
       "createTitle": "Add model mapping",
       "editTitle": "Edit model mapping",
       "aliasLabel": "Custom model name",

@@ -225,37 +225,106 @@ export function filterFederatedMappingRows(
   });
 }
 
+export type UnmappedModelRow = MappingPickerOption & {
+  enabled: boolean;
+};
+
+/** Convert an access row into a stable mapping target ref, or null if incomplete. */
+export function accessRowToTargetRef(row: ModelAccessRow): MappingTargetRef | null {
+  const modelId = row.modelId.trim();
+  if (!modelId) return null;
+  if (row.source === 'oauth') {
+    const channel = normalizeProviderKey(row.oauthChannel ?? row.channelOrBrand);
+    if (!channel) return null;
+    return { source: 'oauth', channel, modelId };
+  }
+  const resourceId = row.resourceId;
+  const brand = row.brand;
+  if (!resourceId || !brand) return null;
+  return { source: 'apiKey', resourceId, brand, modelId };
+}
+
+export function collectMappedTargetKeys(rows: FederatedMappingRow[]): Set<string> {
+  const keys = new Set<string>();
+  rows.forEach((row) => {
+    row.targets.forEach((target) => {
+      keys.add(mappingTargetKey(target));
+    });
+  });
+  return keys;
+}
+
+/**
+ * Models that exist in the access catalog but are not targets of any custom alias.
+ * Includes disabled models so operators can see full coverage.
+ */
+export function buildUnmappedModels(
+  accessRows: ModelAccessRow[],
+  mappedTargetKeys: Set<string>
+): UnmappedModelRow[] {
+  const options: UnmappedModelRow[] = [];
+  const seen = new Set<string>();
+
+  accessRows.forEach((row) => {
+    const ref = accessRowToTargetRef(row);
+    if (!ref) return;
+    const key = mappingTargetKey(ref);
+    if (mappedTargetKeys.has(key) || seen.has(key)) return;
+    seen.add(key);
+
+    const groupKey =
+      ref.source === 'oauth' ? `oauth:${ref.channel}` : `apiKey:${ref.resourceId}`;
+
+    options.push({
+      ...ref,
+      displayName: row.displayName || ref.modelId,
+      providerLabel: row.providerLabel,
+      iconSrc: row.iconSrc ?? null,
+      groupKey,
+      enabled: row.enabled,
+    });
+  });
+
+  options.sort((a, b) => {
+    const p = a.providerLabel.localeCompare(b.providerLabel, undefined, { sensitivity: 'base' });
+    if (p !== 0) return p;
+    return a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
+  });
+
+  return options;
+}
+
+export function filterUnmappedModels(
+  rows: UnmappedModelRow[],
+  query: string
+): UnmappedModelRow[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return rows;
+  return rows.filter((row) => {
+    const hay = `${row.displayName} ${row.modelId} ${row.providerLabel}`.toLowerCase();
+    return hay.includes(q);
+  });
+}
+
 export function buildEnabledMappingOptions(accessRows: ModelAccessRow[]): MappingPickerOption[] {
   const options: MappingPickerOption[] = [];
   const seen = new Set<string>();
 
   accessRows.forEach((row) => {
     if (!row.enabled) return;
-    const modelId = row.modelId.trim();
-    if (!modelId) return;
-
-    let ref: MappingTargetRef;
-    let groupKey: string;
-    if (row.source === 'oauth') {
-      const channel = normalizeProviderKey(row.oauthChannel ?? row.channelOrBrand);
-      if (!channel) return;
-      ref = { source: 'oauth', channel, modelId };
-      groupKey = `oauth:${channel}`;
-    } else {
-      const resourceId = row.resourceId;
-      const brand = row.brand;
-      if (!resourceId || !brand) return;
-      ref = { source: 'apiKey', resourceId, brand, modelId };
-      groupKey = `apiKey:${resourceId}`;
-    }
+    const ref = accessRowToTargetRef(row);
+    if (!ref) return;
 
     const key = mappingTargetKey(ref);
     if (seen.has(key)) return;
     seen.add(key);
 
+    const groupKey =
+      ref.source === 'oauth' ? `oauth:${ref.channel}` : `apiKey:${ref.resourceId}`;
+
     options.push({
       ...ref,
-      displayName: row.displayName || modelId,
+      displayName: row.displayName || ref.modelId,
       providerLabel: row.providerLabel,
       iconSrc: row.iconSrc ?? null,
       groupKey,

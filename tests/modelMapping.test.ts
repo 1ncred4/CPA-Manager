@@ -4,8 +4,11 @@ import {
   applyOauthAliasTargetChanges,
   buildEnabledMappingOptions,
   buildFederatedMappingRows,
+  buildUnmappedModels,
+  collectMappedTargetKeys,
   diffMappingTargets,
   filterFederatedMappingRows,
+  filterUnmappedModels,
   getMappingDraftSignature,
   isMeaningfulAlias,
   mappingTargetKey,
@@ -356,6 +359,74 @@ describe('modelMapping', () => {
     expect(plan.oauthByChannel.get('claude')).toEqual(['a']);
     expect(plan.oauthByChannel.get('codex')).toEqual(['b']);
     expect(plan.apiKeyByResource.get('r1')?.modelIds).toEqual(['c']);
+  });
+
+  test('buildUnmappedModels excludes mapped targets and keeps disabled models', () => {
+    const accessRows: ModelAccessRow[] = [
+      {
+        key: 'oauth:claude:a',
+        source: 'oauth',
+        modelId: 'claude-a',
+        displayName: 'A',
+        providerLabel: 'Claude',
+        channelOrBrand: 'claude',
+        enabled: true,
+        supportsExclude: true,
+        toggleDisabled: false,
+        lockReason: null,
+        oauthChannel: 'claude',
+      },
+      {
+        key: 'oauth:claude:b',
+        source: 'oauth',
+        modelId: 'claude-b',
+        displayName: 'B',
+        providerLabel: 'Claude',
+        channelOrBrand: 'claude',
+        enabled: false,
+        supportsExclude: true,
+        toggleDisabled: false,
+        lockReason: null,
+        oauthChannel: 'claude',
+      },
+      {
+        key: 'apiKey:r1:x',
+        source: 'apiKey',
+        modelId: 'gpt-x',
+        displayName: 'gpt-x',
+        providerLabel: 'OpenAI',
+        channelOrBrand: 'openaiCompatibility',
+        enabled: true,
+        supportsExclude: false,
+        toggleDisabled: true,
+        lockReason: 'unsupported',
+        resourceId: 'openaiCompatibility:0:x',
+        brand: 'openaiCompatibility',
+      },
+    ];
+
+    const mapped = collectMappedTargetKeys([
+      {
+        alias: 'chat',
+        aliasKey: 'chat',
+        targets: [
+          {
+            source: 'oauth',
+            channel: 'claude',
+            modelId: 'claude-a',
+            displayName: 'A',
+            providerLabel: 'Claude',
+            currentlyEnabled: true,
+          },
+        ],
+      },
+    ]);
+
+    const unmapped = buildUnmappedModels(accessRows, mapped);
+    expect(unmapped.map((row) => row.modelId).sort()).toEqual(['claude-b', 'gpt-x']);
+    expect(unmapped.find((row) => row.modelId === 'claude-b')?.enabled).toBe(false);
+    expect(filterUnmappedModels(unmapped, 'gpt')).toHaveLength(1);
+    expect(filterUnmappedModels(unmapped, 'zzz')).toHaveLength(0);
   });
 
   test('filter + signature helpers', () => {

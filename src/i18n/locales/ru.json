@@ -1536,8 +1536,19 @@
       "columns": {
         "alias": "Пользовательское имя",
         "targets": "Цели",
-        "actions": "Действия"
+        "actions": "Действия",
+        "model": "Модель",
+        "provider": "Провайдер"
       },
+      "mappedSectionTitle": "Сопоставлено",
+      "unmappedSectionTitle": "Несопоставленные модели",
+      "unmappedCount": "{{shown}} / {{total}} моделей",
+      "unmappedEmptyTitle": "Нет несопоставленных моделей",
+      "unmappedEmptyDesc": "Все модели каталога уже назначены пользовательским именам.",
+      "unmappedNoSearchResults": "Нет подходящих несопоставленных моделей",
+      "unmappedDisabledHint": "Сначала включите модель на вкладке отключения",
+      "mapAction": "Добавить сопоставление",
+      "modelDisabled": "Отключено",
       "createTitle": "Добавить сопоставление",
       "editTitle": "Редактировать сопоставление",
       "aliasLabel": "Пользовательское имя модели",

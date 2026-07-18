@@ -29,17 +29,23 @@ import {
   buildEnabledMappingOptions,
   buildFederatedMappingRows,
   buildOauthDisplayNameMap,
+  buildUnmappedModels,
+  collectMappedTargetKeys,
   filterFederatedMappingRows,
+  filterUnmappedModels,
   toAliasKey,
   type FederatedMappingRow,
   type MappingPickerOption,
   type MappingTargetRef,
+  type UnmappedModelRow,
 } from './modelMapping';
 import { updateApiKeyModels } from './updateApiKeyModels';
 
 export type UseModelMappingListResult = {
   rows: FederatedMappingRow[];
   filteredRows: FederatedMappingRow[];
+  unmappedRows: UnmappedModelRow[];
+  filteredUnmappedRows: UnmappedModelRow[];
   search: string;
   setSearch: (value: string) => void;
   loading: boolean;
@@ -275,6 +281,16 @@ export function useModelMappingList(): UseModelMappingListResult {
     [rows, search]
   );
 
+  const unmappedRows = useMemo(() => {
+    const mappedKeys = collectMappedTargetKeys(rows);
+    return buildUnmappedModels(accessRows, mappedKeys);
+  }, [accessRows, rows]);
+
+  const filteredUnmappedRows = useMemo(
+    () => filterUnmappedModels(unmappedRows, search),
+    [search, unmappedRows]
+  );
+
   const enabledOptions = useMemo(() => buildEnabledMappingOptions(accessRows), [accessRows]);
 
   const existingAliasKeys = useMemo(() => rows.map((row) => row.aliasKey), [rows]);
@@ -379,6 +395,8 @@ export function useModelMappingList(): UseModelMappingListResult {
   return {
     rows,
     filteredRows,
+    unmappedRows,
+    filteredUnmappedRows,
     search,
     setSearch,
     loading,
