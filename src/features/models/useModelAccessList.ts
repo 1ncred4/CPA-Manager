@@ -9,7 +9,6 @@ import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
 import {
   getAuthFileIcon,
   getTypeLabel,
-  OAUTH_PROVIDER_PRESETS,
   type AuthFileModelItem,
   type OAuthConfigLoadError,
 } from '@/features/authFiles/constants';
@@ -17,7 +16,6 @@ import {
   normalizeOAuthExcludedRules,
   updateOAuthExcludedRule,
 } from '@/features/authFiles/oauthExcludedRules';
-import { OAUTH_CHANNEL_ORDER } from '@/features/providers/oauthChannels';
 import { PROVIDER_LOGOS } from '@/features/providers/brandLogos';
 import { useProviderWorkbench } from '@/features/providers/useProviderWorkbench';
 import type { ProviderResource } from '@/features/providers/types';
@@ -169,9 +167,8 @@ export function useModelAccessList(): UseModelAccessListResult {
       });
     }
 
-    let nextExcluded: Record<string, string[]> = {};
     if (excludedResult.status === 'fulfilled') {
-      nextExcluded = excludedResult.value ?? {};
+      const nextExcluded = excludedResult.value ?? {};
       setExcluded(nextExcluded);
       excludedRef.current = nextExcluded;
       setOauthExcludedError(null);
@@ -182,10 +179,9 @@ export function useModelAccessList(): UseModelAccessListResult {
       setOauthExcludedError(status === 404 ? 'unsupported' : 'load');
     }
 
+    // 仅展示当前有凭证的 OAuth 渠道
     const channels = collectOAuthChannels({
-      presets: [...OAUTH_CHANNEL_ORDER, ...OAUTH_PROVIDER_PRESETS],
       authFileTypes: fileTypes,
-      excludedKeys: Object.keys(nextExcluded),
     });
 
     const definitionResults = await Promise.all(

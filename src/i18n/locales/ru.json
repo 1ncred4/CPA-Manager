@@ -1522,7 +1522,9 @@
       "unsupportedExclude": "Этот провайдер не поддерживает исключение отдельных моделей.",
       "oauthUnsupportedBanner": "Эта версия CPA не поддерживает отключение OAuth-моделей. Модели API Key ниже всё ещё можно управлять.",
       "oauthLoadFailed": "Не удалось загрузить правила отключения OAuth-моделей.",
-      "toggleAria": "Переключить {{model}}"
+      "toggleAria": "Переключить {{model}}",
+      "sectionApiKey": "Провайдеры API Key",
+      "sectionOauth": "Провайдеры OAuth"
     }
   }
 }

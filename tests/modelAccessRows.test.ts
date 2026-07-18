@@ -168,7 +168,7 @@ describe('modelAccessRows', () => {
     });
   });
 
-  test('sorts oauth before api key and by provider/name', () => {
+  test('sorts api key before oauth and by provider/name', () => {
     const rows = sortModelAccessRows([
       {
         key: 'b',
@@ -195,7 +195,7 @@ describe('modelAccessRows', () => {
         lockReason: null,
       },
     ]);
-    expect(rows.map((r) => r.key)).toEqual(['a', 'b']);
+    expect(rows.map((r) => r.key)).toEqual(['b', 'a']);
   });
 
   test('filters by display name, model id, or provider label', () => {
@@ -213,15 +213,12 @@ describe('modelAccessRows', () => {
     expect(filterModelAccessRows(rows, 'codex')).toHaveLength(0);
   });
 
-  test('collects unique oauth channels from mixed sources', () => {
+  test('collects oauth channels only from auth files with credentials', () => {
     expect(
       collectOAuthChannels({
-        presets: ['claude', 'codex'],
-        authFileTypes: ['Claude', 'gemini', '', null],
-        excludedKeys: ['xai'],
-        aliasKeys: ['kimi'],
-      })
-    ).toEqual(expect.arrayContaining(['claude', 'codex', 'gemini', 'xai', 'kimi']));
+        authFileTypes: ['Claude', 'gemini', '', null, 'codex'],
+      }).sort()
+    ).toEqual(['claude', 'codex', 'gemini']);
   });
 
   test('toggleApiKeyExcludedList adds and removes case-insensitively', () => {

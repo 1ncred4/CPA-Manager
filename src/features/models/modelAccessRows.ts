@@ -173,8 +173,8 @@ export function buildApiKeyAccessRows(input: BuildApiKeyRowsInput): ModelAccessR
 
 export function sortModelAccessRows(rows: ModelAccessRow[]): ModelAccessRow[] {
   return [...rows].sort((a, b) => {
-    // OAuth first, then API Key
-    if (a.source !== b.source) return a.source === 'oauth' ? -1 : 1;
+    // API Key first, then OAuth
+    if (a.source !== b.source) return a.source === 'apiKey' ? -1 : 1;
     const providerCmp = a.providerLabel.localeCompare(b.providerLabel, undefined, {
       sensitivity: 'base',
     });
@@ -197,11 +197,12 @@ export function filterModelAccessRows(rows: ModelAccessRow[], query: string): Mo
   });
 }
 
+/**
+ * 仅从当前已有凭证（auth files）的 type/provider 收集 OAuth 渠道。
+ * 不含 presets / 排除规则 keys — 无凭证的渠道不展示模型。
+ */
 export function collectOAuthChannels(sources: {
-  presets?: Iterable<string>;
   authFileTypes?: Iterable<string | undefined | null>;
-  excludedKeys?: Iterable<string>;
-  aliasKeys?: Iterable<string>;
 }): string[] {
   const set = new Set<string>();
   const add = (value: unknown) => {
@@ -210,10 +211,7 @@ export function collectOAuthChannels(sources: {
     set.add(key);
   };
 
-  (sources.presets ? Array.from(sources.presets) : []).forEach(add);
   (sources.authFileTypes ? Array.from(sources.authFileTypes) : []).forEach(add);
-  (sources.excludedKeys ? Array.from(sources.excludedKeys) : []).forEach(add);
-  (sources.aliasKeys ? Array.from(sources.aliasKeys) : []).forEach(add);
 
   return Array.from(set);
 }

@@ -1544,7 +1544,9 @@
       "unsupportedExclude": "该提供商不支持按模型排除。",
       "oauthUnsupportedBanner": "当前 CPA 版本不支持 OAuth 模型禁用。下方 API Key 模型仍可管理。",
       "oauthLoadFailed": "加载 OAuth 模型禁用规则失败。",
-      "toggleAria": "切换 {{model}}"
+      "toggleAria": "切换 {{model}}",
+      "sectionApiKey": "API Key 提供商",
+      "sectionOauth": "OAuth 提供商"
     }
   }
 }

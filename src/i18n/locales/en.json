@@ -1544,7 +1544,9 @@
       "unsupportedExclude": "This provider does not support per-model exclusion.",
       "oauthUnsupportedBanner": "This CPA version does not support OAuth model exclusion. API Key models below can still be managed.",
       "oauthLoadFailed": "Failed to load OAuth model exclusion rules.",
-      "toggleAria": "Toggle {{model}}"
+      "toggleAria": "Toggle {{model}}",
+      "sectionApiKey": "API Key providers",
+      "sectionOauth": "OAuth providers"
     }
   }
 }

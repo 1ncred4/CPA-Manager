@@ -57,6 +57,25 @@
   white-space: nowrap;
 }
 
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 0 2px;
+}
+
 .table {
   border: 1px solid var(--border-color);
   border-radius: 12px;

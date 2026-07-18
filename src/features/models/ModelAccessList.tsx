@@ -125,57 +125,86 @@ export function ModelAccessList({ list }: ModelAccessListProps) {
           />
         </div>
       ) : (
-        <div className={styles.table} role="table" aria-label={t('modelsPage.tabs.disabled')}>
-          <div className={styles.header} role="row">
-            <div role="columnheader">
-              {t('modelsPage.access.columnModel', { defaultValue: 'Model' })}
-            </div>
-            <div role="columnheader">
-              {t('modelsPage.access.columnProvider', { defaultValue: 'Provider' })}
-            </div>
-            <div role="columnheader" style={{ textAlign: 'right' }}>
-              {t('modelsPage.access.columnEnabled', { defaultValue: 'Enabled' })}
-            </div>
-          </div>
+        <div className={styles.sections}>
+          {(['apiKey', 'oauth'] as const).map((source) => {
+            const sectionRows = filteredRows.filter((row) => row.source === source);
+            if (sectionRows.length === 0) return null;
 
-          {filteredRows.map((row) => {
-            const pending = pendingKeys.has(row.key);
-            const toggleOff =
-              disableControls || row.toggleDisabled || pending || !row.supportsExclude;
-            const title = lockTitle(row, t);
-            const showSecondaryId =
-              row.displayName.trim().toLowerCase() !== row.modelId.trim().toLowerCase();
+            const sectionTitle =
+              source === 'apiKey'
+                ? t('modelsPage.access.sectionApiKey', {
+                    defaultValue: 'API Key providers',
+                  })
+                : t('modelsPage.access.sectionOauth', {
+                    defaultValue: 'OAuth providers',
+                  });
 
             return (
-              <div key={row.key} className={styles.row} role="row" title={title}>
-                <div className={styles.modelCell} role="cell">
-                  {row.iconSrc ? (
-                    <img src={row.iconSrc} alt="" className={styles.icon} />
-                  ) : (
-                    <span className={styles.iconFallback} aria-hidden />
-                  )}
-                  <div className={styles.modelText}>
-                    <span className={styles.modelName}>{row.displayName}</span>
-                    {showSecondaryId ? (
-                      <span className={styles.modelId}>{row.modelId}</span>
-                    ) : null}
+              <div key={source} className={styles.section}>
+                <div className={styles.sectionTitle}>{sectionTitle}</div>
+                <div
+                  className={styles.table}
+                  role="table"
+                  aria-label={sectionTitle}
+                >
+                  <div className={styles.header} role="row">
+                    <div role="columnheader">
+                      {t('modelsPage.access.columnModel', { defaultValue: 'Model' })}
+                    </div>
+                    <div role="columnheader">
+                      {t('modelsPage.access.columnProvider', { defaultValue: 'Provider' })}
+                    </div>
+                    <div role="columnheader" style={{ textAlign: 'right' }}>
+                      {t('modelsPage.access.columnEnabled', { defaultValue: 'Enabled' })}
+                    </div>
                   </div>
-                </div>
-                <div className={styles.providerCell} role="cell">
-                  {row.providerLabel}
-                </div>
-                <div className={styles.toggleCell} role="cell">
-                  <ToggleSwitch
-                    checked={row.enabled}
-                    disabled={toggleOff}
-                    ariaLabel={t('modelsPage.access.toggleAria', {
-                      defaultValue: 'Toggle {{model}}',
-                      model: row.displayName,
-                    })}
-                    onChange={(value) => {
-                      void toggleRow(row, value);
-                    }}
-                  />
+
+                  {sectionRows.map((row) => {
+                    const pending = pendingKeys.has(row.key);
+                    const toggleOff =
+                      disableControls ||
+                      row.toggleDisabled ||
+                      pending ||
+                      !row.supportsExclude;
+                    const title = lockTitle(row, t);
+                    const showSecondaryId =
+                      row.displayName.trim().toLowerCase() !==
+                      row.modelId.trim().toLowerCase();
+
+                    return (
+                      <div key={row.key} className={styles.row} role="row" title={title}>
+                        <div className={styles.modelCell} role="cell">
+                          {row.iconSrc ? (
+                            <img src={row.iconSrc} alt="" className={styles.icon} />
+                          ) : (
+                            <span className={styles.iconFallback} aria-hidden />
+                          )}
+                          <div className={styles.modelText}>
+                            <span className={styles.modelName}>{row.displayName}</span>
+                            {showSecondaryId ? (
+                              <span className={styles.modelId}>{row.modelId}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className={styles.providerCell} role="cell">
+                          {row.providerLabel}
+                        </div>
+                        <div className={styles.toggleCell} role="cell">
+                          <ToggleSwitch
+                            checked={row.enabled}
+                            disabled={toggleOff}
+                            ariaLabel={t('modelsPage.access.toggleAria', {
+                              defaultValue: 'Toggle {{model}}',
+                              model: row.displayName,
+                            })}
+                            onChange={(value) => {
+                              void toggleRow(row, value);
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
