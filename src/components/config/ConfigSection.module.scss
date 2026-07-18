@@ -10,7 +10,8 @@
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
-  scroll-margin-top: var(--config-tab-offset, calc(var(--header-height, 80px) + 56px));
+  // Offset relative to the internal sections scroller (tab bar is outside it).
+  scroll-margin-top: 12px;
 
   @include mobile {
     gap: 14px;

@@ -5,6 +5,14 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+
+  @include mobile {
+    overflow: visible;
+    flex: 0 0 auto;
+  }
 
   :global(.form-group) {
     gap: 7px;
@@ -133,6 +141,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 10px;
+  flex-shrink: 0;
   padding: 0 0 18px;
   border-bottom: 1px solid var(--border-color);
 }
@@ -407,11 +416,11 @@
 }
 
 // Stateless wrapper around each searchable field; the search jump scrolls to and
-// pulse-highlights it.
+// pulse-highlights it. Offset is relative to the sections scroller, not the page.
 .fieldAnchor {
   display: block;
   min-width: 0;
-  scroll-margin-top: var(--config-tab-offset, calc(var(--header-height, 80px) + 56px));
+  scroll-margin-top: 16px;
 }
 
 .fieldHighlightActive {
@@ -517,20 +526,25 @@
 .workspace {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 0;
   min-width: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 
   @include mobile {
+    overflow: visible;
+    flex: 0 0 auto;
     gap: 12px;
   }
 }
 
 .tabBar {
-  position: sticky;
-  top: var(--header-height, 80px);
+  position: relative;
   z-index: 5;
-  padding: 8px 0;
-  background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
+  flex-shrink: 0;
+  padding: 0 0 12px;
+  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -564,18 +578,38 @@
   transition:
     background-color 0.15s ease,
     border-color 0.15s ease,
-    color 0.15s ease;
+    color 0.15s ease,
+    box-shadow 0.15s ease;
 
-  &:hover {
+  &:hover:not(.tabActive) {
     color: var(--text-primary);
     background: color-mix(in srgb, var(--text-primary) 5%, transparent);
   }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 22%, transparent);
+  }
 }
 
-.tabActive {
-  color: var(--bg-primary);
+// Keep selector specificity above `.tab:hover` so the active pill never regresses on hover.
+.tab.tabActive {
+  color: var(--primary-contrast, #ffffff);
   background: var(--text-primary);
   border-color: var(--text-primary);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 18%, transparent);
+
+  &:hover {
+    color: var(--primary-contrast, #ffffff);
+    background: var(--text-primary);
+    border-color: var(--text-primary);
+  }
+
+  .tabBadge {
+    background: color-mix(in srgb, var(--primary-contrast, #ffffff) 18%, transparent);
+    border-color: color-mix(in srgb, var(--primary-contrast, #ffffff) 34%, transparent);
+    color: var(--primary-contrast, #ffffff);
+  }
 }
 
 .tabIcon {
@@ -614,8 +648,19 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 14px 2px 8px;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 
   @include mobile {
+    overflow: visible;
+    flex: 0 0 auto;
+    padding: 0;
     gap: 12px;
   }
 }

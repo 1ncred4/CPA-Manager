@@ -325,6 +325,7 @@ export function MainLayout() {
   const fullBrandName = 'CLI Proxy API Management Center';
   const abbrBrandName = t('title.abbr');
   const isLogsPage = location.pathname.startsWith('/logs');
+  const isConfigPage = location.pathname.startsWith('/config');
   const isPluginResourcePage = location.pathname.startsWith('/plugin-pages');
   const showSidebarLabels = !sidebarCollapsed || sidebarOpen;
 
@@ -940,14 +941,14 @@ export function MainLayout() {
 
         <div
           className={`content${isLogsPage ? ' content-logs' : ''}${
-            isPluginResourcePage ? ' content-plugin-resource' : ''
-          }`}
+            isConfigPage ? ' content-config' : ''
+          }${isPluginResourcePage ? ' content-plugin-resource' : ''}`}
           ref={contentRef}
         >
           <main
             className={`main-content${isLogsPage ? ' main-content-logs' : ''}${
-              isPluginResourcePage ? ' main-content-plugin-resource' : ''
-            }`}
+              isConfigPage ? ' main-content-config' : ''
+            }${isPluginResourcePage ? ' main-content-plugin-resource' : ''}`}
           >
             <PageTransition
               render={(location) => <MainRoutes location={location} />}

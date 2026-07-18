@@ -706,6 +706,10 @@
     overflow: hidden;
   }
 
+  &.content-config {
+    overflow: hidden;
+  }
+
   &.content-plugin-resource {
     overflow: hidden;
     scrollbar-gutter: auto;
@@ -725,6 +729,20 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
+  }
+
+  // Config page keeps the section tab bar fixed and scrolls only the settings body.
+  &.main-content-config {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 16px;
+
+    .page-transition,
+    .page-transition__layer {
+      min-height: 0;
+      height: 100%;
+    }
   }
 
   &.main-content-plugin-resource {

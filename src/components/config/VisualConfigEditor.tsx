@@ -208,9 +208,8 @@ export function VisualConfigEditor({
   const [activeSectionId, setActiveSectionId] = useState<VisualSectionId>('connectivity');
   const sectionRefs = useRef<Partial<Record<VisualSectionId, HTMLElement | null>>>({});
   const tabBarRef = useRef<HTMLDivElement | null>(null);
-  // Distance from viewport top to the sticky tab bar's bottom (= header + tab bar height).
-  // Used both as the scroll-spy detection line and as --config-tab-offset for scroll-margin-top.
-  const [tabOffset, setTabOffset] = useState(0);
+  // Internal scroller for full-mode section bodies (tab bar stays fixed above it).
+  const sectionsScrollerRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   // Dropdown visibility is tracked separately from the query text so a jump can close the
   // results while leaving the typed text in the box for further editing.
@@ -286,11 +285,21 @@ export function VisualConfigEditor({
       highlightedElRef.current?.classList.remove(styles.fieldHighlightActive);
     }
 
-    // Vertical layout: one scrollIntoView brings the field (and its section) into view.
-    // The field's scroll-margin-top (= --config-tab-offset) offsets the sticky header +
-    // tab bar. rAF lets the just-opened <details> lay out before we scroll.
+    // Scroll the field into the sections scroller. rAF lets the just-opened <details>
+    // finish layout before measuring/scrolling.
     requestAnimationFrame(() => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const scroller = sectionsScrollerRef.current;
+      if (scroller) {
+        const scrollerRect = scroller.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const nextTop =
+          scroller.scrollTop +
+          (elRect.top - scrollerRect.top) -
+          Math.max(16, (scroller.clientHeight - elRect.height) / 2);
+        scroller.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
+      } else {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
       el.classList.add(styles.fieldHighlightActive);
     });
     highlightedElRef.current = el;
@@ -490,60 +499,33 @@ export function VisualConfigEditor({
     ) || hasPayloadValidationErrors;
   const payloadValidationKey = hasPayloadValidationErrors ? 'payload-errors' : 'payload-ok';
 
-  // Measure the sticky tab bar's bottom (= fixed header + tab bar height) once full mode
-  // mounts, and re-measure on resize. This is both the scroll-spy detection line and the
-  // value exposed as --config-tab-offset for scroll-margin-top on sections / field anchors.
-  useEffect(() => {
-    if (mode !== 'full') return undefined;
-    const measure = () => {
-      const bar = tabBarRef.current;
-      if (!bar) return;
-      setTabOffset(Math.round(bar.getBoundingClientRect().bottom));
-    };
-    measure();
-    const onResize = () => measure();
-    window.addEventListener('resize', onResize);
-    const ro =
-      typeof ResizeObserver !== 'undefined' && tabBarRef.current
-        ? new ResizeObserver(measure)
-        : null;
-    if (ro && tabBarRef.current) ro.observe(tabBarRef.current);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      ro?.disconnect();
-    };
-  }, [mode]);
-
-  // Scroll-spy: highlight the last section whose top has scrolled past the tab bar. A scroll
-  // listener (vs. IntersectionObserver) switches the tab the instant a section header crosses
-  // the tab bar, matching "scroll down -> next tab" better than IO's wide band.
+  // Scroll-spy against the internal sections scroller so the fixed tab bar tracks the
+  // section currently visible at the top of the settings body.
   useEffect(() => {
     if (mode !== 'full' || !isCurrentLayer) return undefined;
-    const bar = tabBarRef.current;
-    if (!bar) return undefined;
-    let scroller: HTMLElement | null = bar.parentElement;
-    while (scroller) {
-      const oy = getComputedStyle(scroller).overflowY;
-      if ((oy === 'auto' || oy === 'scroll') && scroller.scrollHeight > scroller.clientHeight) {
-        break;
-      }
-      scroller = scroller.parentElement;
-    }
-    const target: HTMLElement = scroller ?? document.documentElement;
+    const scroller = sectionsScrollerRef.current;
+    if (!scroller) return undefined;
+
     const update = () => {
+      const marker = scroller.getBoundingClientRect().top + 12;
       let current: VisualSectionId | null = sections[0]?.id ?? null;
       for (const section of sections) {
         const el = sectionRefs.current[section.id];
         if (!el) continue;
-        if (el.getBoundingClientRect().top <= tabOffset + 1) current = section.id;
+        if (el.getBoundingClientRect().top <= marker) current = section.id;
         else break;
       }
       if (current) setActiveSectionId(current);
     };
+
     update();
-    target.addEventListener('scroll', update, { passive: true });
-    return () => target.removeEventListener('scroll', update);
-  }, [isCurrentLayer, mode, sections, tabOffset]);
+    scroller.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    return () => {
+      scroller.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+    };
+  }, [isCurrentLayer, mode, sections]);
 
   // Keep the active tab visible inside the horizontal tab scroller on narrow viewports.
   useEffect(() => {
@@ -563,7 +545,17 @@ export function VisualConfigEditor({
 
   const handleSectionJump = useCallback((sectionId: VisualSectionId) => {
     setActiveSectionId(sectionId);
-    sectionRefs.current[sectionId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const scroller = sectionsScrollerRef.current;
+    const el = sectionRefs.current[sectionId];
+    if (!el) return;
+    if (!scroller) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    const scrollerRect = scroller.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const nextTop = scroller.scrollTop + (elRect.top - scrollerRect.top) - 8;
+    scroller.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
   }, []);
 
   // Shared high-frequency field blocks — reused verbatim by both the simple view and full mode
@@ -667,10 +659,7 @@ export function VisualConfigEditor({
   );
 
   return (
-    <div
-      className={styles.visualEditor}
-      style={tabOffset > 0 ? ({ '--config-tab-offset': `${tabOffset}px` } as CSSProperties) : undefined}
-    >
+    <div className={styles.visualEditor}>
       <div className={styles.overview}>
         <div className={styles.overviewHeader}>
           <div
@@ -884,7 +873,7 @@ export function VisualConfigEditor({
             </div>
           </div>
 
-          <div className={styles.sections}>
+          <div className={styles.sections} ref={sectionsScrollerRef}>
             <ConfigSection
               id="connectivity"
               ref={(node) => {

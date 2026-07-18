@@ -433,7 +433,7 @@
     "fetch_all": "获取全部",
     "weekly_limit": "周限额",
     "monthly_credits": "月度积分",
-    "remaining_percent": "剩余 {{percent}}",
+    "remaining_percent": "{{percent}}",
     "reset_at": "重置 {{time}}",
     "product_usage": "{{product}} 使用",
     "plan_label": "套餐",

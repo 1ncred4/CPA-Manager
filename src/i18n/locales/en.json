@@ -433,7 +433,7 @@
     "fetch_all": "Fetch All",
     "weekly_limit": "Weekly limit",
     "monthly_credits": "Monthly credits",
-    "remaining_percent": "Remaining {{percent}}",
+    "remaining_percent": "{{percent}}",
     "reset_at": "Resets {{time}}",
     "product_usage": "{{product}} usage",
     "plan_label": "Plan",
