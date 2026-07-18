@@ -3,7 +3,8 @@ import { IconPlus, IconSearch } from '@/components/ui/icons';
 import type { ProviderRecentUsageMap } from '@/components/providers/utils';
 import { PROVIDER_LOGOS } from '../brandLogos';
 import type { ProviderGroup, ProviderResource } from '../types';
-import { ProviderResourceTable } from './ProviderResourceTable';
+import { ProviderResourceCard } from './ProviderResourceCard';
+import cardStyles from './ProviderResourceCard.module.scss';
 import { ProviderResourceToolbar } from './ProviderResourceToolbar';
 import type { ProviderSortBy, SortDir } from '../types';
 import styles from './ProviderResourcePanel.module.scss';
@@ -125,16 +126,21 @@ export function ProviderResourcePanel({
           </div>
         </div>
       ) : (
-        <ProviderResourceTable
-          resources={filteredResources}
-          selectedId={selectedId}
-          disableMutations={disableMutations}
-          usageByProvider={usageByProvider}
-          onView={onView}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          onToggleDisabled={onToggleDisabled}
-        />
+        <div className={cardStyles.cardGrid}>
+          {filteredResources.map((resource) => (
+            <ProviderResourceCard
+              key={resource.id}
+              resource={resource}
+              selected={resource.id === selectedId}
+              disableMutations={disableMutations}
+              usageByProvider={usageByProvider}
+              onView={onView}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onToggleDisabled={onToggleDisabled}
+            />
+          ))}
+        </div>
       )}
     </section>
   );
