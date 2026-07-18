@@ -5,7 +5,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { IconSearch } from '@/components/ui/icons';
+import { IconPlus, IconSearch } from '@/components/ui/icons';
 import { copyToClipboard } from '@/utils/clipboard';
 import { AuthFileCard } from '@/features/authFiles/components/AuthFileCard';
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
@@ -32,12 +32,16 @@ export interface OAuthAuthFilesPanelProps {
   channel: string;
   disableControls: boolean;
   authFiles: ReturnType<typeof useAuthFilesData>;
+  createLabel?: string;
+  onCreate?: () => void;
 }
 
 export function OAuthAuthFilesPanel({
   channel,
   disableControls,
   authFiles,
+  createLabel,
+  onCreate,
 }: OAuthAuthFilesPanelProps) {
   const { t } = useTranslation();
   const showNotification = useNotificationStore((s) => s.showNotification);
@@ -156,19 +160,35 @@ export function OAuthAuthFilesPanel({
               <h2 className={styles.title}>{title}</h2>
             </div>
           </div>
-          <div className={styles.searchWrap}>
-            <span className={styles.searchIcon} aria-hidden="true">
-              <IconSearch size={16} />
-            </span>
-            <input
-              type="search"
-              className={styles.searchInput}
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder={t('providersPage.oauth.filterPlaceholder', {
-                defaultValue: 'Search credentials…',
-              })}
-            />
+          <div className={styles.searchRow}>
+            <div className={styles.searchWrap}>
+              <span className={styles.searchIcon} aria-hidden="true">
+                <IconSearch size={16} />
+              </span>
+              <input
+                type="search"
+                className={styles.searchInput}
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder={t('providersPage.oauth.filterPlaceholder', {
+                  defaultValue: 'Search credentials…',
+                })}
+              />
+            </div>
+            {onCreate ? (
+              <button
+                type="button"
+                className={styles.createButton}
+                onClick={onCreate}
+                disabled={disableControls}
+              >
+                <IconPlus size={16} />
+                <span>
+                  {createLabel ??
+                    t('providersPage.oauth.addCredential', { defaultValue: 'Add credential' })}
+                </span>
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

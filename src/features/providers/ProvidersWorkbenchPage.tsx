@@ -487,11 +487,6 @@ export function ProvidersWorkbenchPage() {
         totalResources={totalResources}
         providerFamilies={providerFamilies}
         updatedAtLabel={updatedAtLabel}
-        isFetching={workbench.isFetching || authFiles.loading}
-        isNewDisabled={disableMutations && activeCategory.method === 'apiKey'}
-        newLabel={newLabel}
-        onRefresh={() => void handleRefresh()}
-        onNew={openCreate}
       />
 
       {errorBanner}
@@ -514,6 +509,7 @@ export function ProvidersWorkbenchPage() {
             disableMutations={disableMutations}
             usageByProvider={usageByProvider}
             toolbarControls={toolbarControls}
+            createLabel={newLabel}
             onView={openView}
             onEdit={openEdit}
             onDelete={handleDelete}
@@ -525,6 +521,8 @@ export function ProvidersWorkbenchPage() {
             channel={activeCategory.channel}
             disableControls={connectionStatus !== 'connected'}
             authFiles={authFiles}
+            createLabel={newLabel}
+            onCreate={openCreate}
           />
         ) : null}
       </div>

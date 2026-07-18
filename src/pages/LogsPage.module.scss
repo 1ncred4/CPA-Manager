@@ -30,79 +30,103 @@
   flex: 0 0 auto;
 }
 
-.topBar {
+.pageHeader {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+}
+
+.pageHeaderInfo {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  min-width: 0;
+}
+
+.titleRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: $spacing-md;
-  min-height: 36px;
-
-  @include mobile {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: $spacing-sm;
-  }
-}
-
-.topBarLeft {
-  display: flex;
-  align-items: center;
   gap: $spacing-md;
   min-width: 0;
   flex-wrap: wrap;
 }
 
 .pageTitle {
-  font-size: 20px;
+  font-size: 28px;
   font-weight: 700;
   color: var(--text-primary);
   margin: 0;
   line-height: 1.2;
-  white-space: nowrap;
+}
+
+.toolbarTabs {
+  display: flex;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+
+  :global(.btn.btn-sm) {
+    line-height: 16px;
+    min-width: 0;
+  }
+
+  @include mobile {
+    width: 100%;
+  }
 }
 
 .tabBar {
-  display: inline-grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-primary) 72%, transparent);
+  display: inline-flex;
+  gap: $spacing-xs;
+  align-items: center;
+  padding: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+
+  @include mobile {
+    flex: 1 1 auto;
+    width: 100%;
+  }
 }
 
-.tabItem {
-  @include button-reset;
-  min-height: 30px;
-  padding: 0 12px;
-  border-radius: 6px;
-  border: 1px solid transparent;
+.tabItem:global(.btn.btn-sm) {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border-color: transparent;
+  background: transparent;
   color: var(--text-secondary);
-  font-size: 12.5px;
-  font-weight: 650;
-  line-height: 1.25;
-  white-space: nowrap;
-  transition:
-    color 0.15s ease,
-    background-color 0.15s ease,
-    border-color 0.15s ease;
+  box-shadow: none;
 
   &:hover:not(:disabled) {
+    border-color: transparent;
+    background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
     color: var(--text-primary);
-    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
   }
 
-  &:focus,
-  &:focus-visible {
-    outline: none;
-    box-shadow: none;
+  > span {
+    white-space: nowrap;
+  }
+
+  @include mobile {
+    flex: 1 1 0;
   }
 }
 
-.tabActive {
-  color: var(--bg-primary);
-  background: var(--text-primary);
-  border-color: var(--text-primary);
+.tabActive:global(.btn.btn-sm) {
+  background: var(--primary-color);
+  border-color: var(--primary-color);
+  color: var(--primary-contrast, #fff);
+  box-shadow: 0 8px 18px -14px rgba(0, 0, 0, 0.45);
+
+  &:hover:not(:disabled) {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
+    color: var(--primary-contrast, #fff);
+  }
 }
 
 .runtimeNotice {
@@ -115,6 +139,10 @@
   font-size: 11.5px;
   line-height: 1.3;
   white-space: nowrap;
+}
+
+:global([data-theme='dark']) .tabBar {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .alertStack {

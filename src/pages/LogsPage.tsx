@@ -1104,19 +1104,34 @@ export function LogsPage() {
     <div className={styles.container}>
       {!fullscreenLogs && (
         <div className={styles.chrome}>
-          <div className={styles.topBar}>
-            <div className={styles.topBarLeft}>
-              <h1 className={styles.pageTitle}>{t('logs.title')}</h1>
-              <div className={styles.tabBar}>
-                <button
+          <div className={styles.pageHeader}>
+            <div className={styles.pageHeaderInfo}>
+              <div className={styles.titleRow}>
+                <h1 className={styles.pageTitle}>{t('logs.title')}</h1>
+                <div className={styles.runtimeNotice}>
+                  {t(`logs.runtime_${serverRuntimeKind}`)}
+                </div>
+              </div>
+            </div>
+            <div className={styles.toolbarTabs}>
+              <div className={styles.tabBar} role="tablist">
+                <Button
                   type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'logs'}
+                  variant="secondary"
+                  size="sm"
                   className={`${styles.tabItem} ${activeTab === 'logs' ? styles.tabActive : ''}`}
                   onClick={() => setActiveTab('logs')}
                 >
                   {t('logs.log_content')}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'errors'}
+                  variant="secondary"
+                  size="sm"
                   className={`${styles.tabItem} ${activeTab === 'errors' ? styles.tabActive : ''}`}
                   onClick={() => {
                     setFullscreenLogs(false);
@@ -1124,10 +1139,9 @@ export function LogsPage() {
                   }}
                 >
                   {t('logs.error_logs_modal_title')}
-                </button>
+                </Button>
               </div>
             </div>
-            <div className={styles.runtimeNotice}>{t(`logs.runtime_${serverRuntimeKind}`)}</div>
           </div>
 
           {activeTab === 'logs' && (

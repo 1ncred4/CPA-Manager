@@ -38,7 +38,7 @@
   gap: $spacing-sm;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   min-width: 0;
 
   :global(.btn.btn-sm) {

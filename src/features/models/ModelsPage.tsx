@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@/components/ui/Button';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import { ModelAccessList } from './ModelAccessList';
@@ -68,7 +69,7 @@ export function ModelsPage() {
   return (
     <div className={styles.page}>
       <div className={styles.header}>
-        <div>
+        <div className={styles.headerInfo}>
           <h1 className={styles.title}>{t('modelsPage.title', { defaultValue: '模型管理' })}</h1>
           <p className={styles.subtitle}>
             {t('modelsPage.subtitle', {
@@ -76,25 +77,31 @@ export function ModelsPage() {
             })}
           </p>
         </div>
-        <div className={styles.tabs} role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'mapping'}
-            className={`${styles.tab} ${tab === 'mapping' ? styles.tabActive : ''}`}
-            onClick={() => setTab('mapping')}
-          >
-            {t('modelsPage.tabs.mapping', { defaultValue: '模型映射' })}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'disabled'}
-            className={`${styles.tab} ${tab === 'disabled' ? styles.tabActive : ''}`}
-            onClick={() => setTab('disabled')}
-          >
-            {t('modelsPage.tabs.disabled', { defaultValue: '模型禁用' })}
-          </button>
+        <div className={styles.toolbar}>
+          <div className={styles.tabs} role="tablist">
+            <Button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'mapping'}
+              variant="secondary"
+              size="sm"
+              className={`${styles.tab} ${tab === 'mapping' ? styles.tabActive : ''}`}
+              onClick={() => setTab('mapping')}
+            >
+              {t('modelsPage.tabs.mapping', { defaultValue: '模型映射' })}
+            </Button>
+            <Button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'disabled'}
+              variant="secondary"
+              size="sm"
+              className={`${styles.tab} ${tab === 'disabled' ? styles.tabActive : ''}`}
+              onClick={() => setTab('disabled')}
+            >
+              {t('modelsPage.tabs.disabled', { defaultValue: '模型禁用' })}
+            </Button>
+          </div>
         </div>
       </div>
 

@@ -1,5 +1,4 @@
 import { useTranslation } from 'react-i18next';
-import { IconLoader2, IconPlus, IconRefreshCw } from '@/components/ui/icons';
 import styles from './ProviderHeaderCard.module.scss';
 
 interface ProviderHeaderCardProps {
@@ -8,13 +7,7 @@ interface ProviderHeaderCardProps {
   totalResources: number;
   providerFamilies: number;
   updatedAtLabel: string;
-  isFetching?: boolean;
-  isNewDisabled?: boolean;
-  showNewAction?: boolean;
   showSummary?: boolean;
-  newLabel?: string;
-  onRefresh: () => void;
-  onNew: () => void;
 }
 
 export function ProviderHeaderCard({
@@ -23,13 +16,7 @@ export function ProviderHeaderCard({
   totalResources,
   providerFamilies,
   updatedAtLabel,
-  isFetching = false,
-  isNewDisabled = false,
-  showNewAction = true,
   showSummary = true,
-  newLabel,
-  onRefresh,
-  onNew,
 }: ProviderHeaderCardProps) {
   const { t } = useTranslation();
 
@@ -38,35 +25,6 @@ export function ProviderHeaderCard({
       <div className={styles.row}>
         <div className={styles.titleArea}>
           <h1 className={styles.title}>{title ?? t('providersPage.header.title')}</h1>
-        </div>
-        <div className={styles.actions}>
-          <button
-            type="button"
-            className={`${styles.btn} ${styles.btnOutline}`}
-            onClick={onRefresh}
-            disabled={isFetching}
-            aria-label={
-              isFetching ? t('providersPage.actions.syncing') : t('providersPage.actions.refresh')
-            }
-          >
-            <span className={`${styles.btnIcon} ${isFetching ? styles.spin : ''}`.trim()}>
-              {isFetching ? <IconLoader2 size={16} /> : <IconRefreshCw size={16} />}
-            </span>
-            <span>
-              {isFetching ? t('providersPage.actions.syncing') : t('providersPage.actions.refresh')}
-            </span>
-          </button>
-          {showNewAction ? (
-            <button
-              type="button"
-              className={`${styles.btn} ${styles.btnPrimary}`}
-              onClick={onNew}
-              disabled={isNewDisabled}
-            >
-              <IconPlus size={16} />
-              <span>{newLabel ?? t('providersPage.actions.new')}</span>
-            </button>
-          ) : null}
         </div>
       </div>
 

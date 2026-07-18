@@ -556,23 +556,33 @@ export function ConfigPage() {
       <div className={styles.pageHeader}>
         <div className={styles.pageHeaderCopy}>
           <h1 className={styles.pageTitle}>{t('config_management.title')}</h1>
-          <div className={styles.tabBar}>
-            <button
+        </div>
+        <div className={styles.toolbarTabs}>
+          <div className={styles.tabBar} role="tablist">
+            <Button
               type="button"
+              role="tab"
+              aria-selected={activeTab === 'visual'}
+              variant="secondary"
+              size="sm"
               className={`${styles.tabItem} ${activeTab === 'visual' ? styles.tabActive : ''}`}
               onClick={() => handleTabChange('visual')}
               disabled={saving || loading}
             >
               {t('config_management.tabs.visual', { defaultValue: '可视化编辑' })}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              role="tab"
+              aria-selected={activeTab === 'source'}
+              variant="secondary"
+              size="sm"
               className={`${styles.tabItem} ${activeTab === 'source' ? styles.tabActive : ''}`}
               onClick={() => handleTabChange('source')}
               disabled={saving || loading}
             >
               {t('config_management.tabs.source', { defaultValue: '源代码编辑' })}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

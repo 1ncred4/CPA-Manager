@@ -28,6 +28,7 @@ interface ProviderResourcePanelProps {
   disableMutations?: boolean;
   usageByProvider?: ProviderRecentUsageMap;
   toolbarControls?: ProviderPanelControls;
+  createLabel?: string;
   onView: (resource: ProviderResource) => void;
   onEdit: (resource: ProviderResource) => void;
   onDelete: (resource: ProviderResource) => void;
@@ -44,6 +45,7 @@ export function ProviderResourcePanel({
   disableMutations,
   usageByProvider,
   toolbarControls,
+  createLabel,
   onView,
   onEdit,
   onDelete,
@@ -86,17 +88,28 @@ export function ProviderResourcePanel({
               <h2 className={styles.title}>{providerTitle}</h2>
             </div>
           </div>
-          <div className={styles.searchWrap}>
-            <span className={styles.searchIcon} aria-hidden="true">
-              <IconSearch size={16} />
-            </span>
-            <input
-              type="search"
-              className={styles.searchInput}
-              value={filter}
-              onChange={(event) => onFilterChange(event.target.value)}
-              placeholder={t('providersPage.table.filterPlaceholder')}
-            />
+          <div className={styles.searchRow}>
+            <div className={styles.searchWrap}>
+              <span className={styles.searchIcon} aria-hidden="true">
+                <IconSearch size={16} />
+              </span>
+              <input
+                type="search"
+                className={styles.searchInput}
+                value={filter}
+                onChange={(event) => onFilterChange(event.target.value)}
+                placeholder={t('providersPage.table.filterPlaceholder')}
+              />
+            </div>
+            <button
+              type="button"
+              className={styles.createButton}
+              onClick={onCreate}
+              disabled={disableMutations}
+            >
+              <IconPlus size={16} />
+              <span>{createLabel ?? t('providersPage.actions.new')}</span>
+            </button>
           </div>
         </div>
         {toolbarControls ? (
@@ -118,12 +131,6 @@ export function ProviderResourcePanel({
       {filteredResources.length === 0 ? (
         <div className={styles.empty}>
           <div>{t('providersPage.table.empty')}</div>
-          <div className={styles.emptyAction}>
-            <button type="button" className={styles.emptyActionButton} onClick={onCreate}>
-              <IconPlus size={16} />
-              <span>{t('providersPage.actions.new')}</span>
-            </button>
-          </div>
         </div>
       ) : (
         <div className={cardStyles.cardGrid}>
