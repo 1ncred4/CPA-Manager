@@ -1537,7 +1537,7 @@
   },
   "modelsPage": {
     "title": "模型管理",
-    "subtitle": "統一管理所有供應商的模型停用規則與模型對應。",
+    "subtitle": "統一管理所有 OAuth 與 API Key 供應商的模型啟用狀態與對應。",
     "tabs": {
       "disabled": "模型停用",
       "mapping": "模型對應"
@@ -1554,6 +1554,23 @@
     "editMappingTitle": "編輯模型對應",
     "resourceNotFound": "找不到該供應商項目",
     "mappingEditorLabel": "模型對應（每行一個：name 或 name=alias）",
-    "excludedEditorLabel": "排除模型（每行一條，支援 * 萬用字元；整項目停用由供應商啟停控制）"
+    "excludedEditorLabel": "排除模型（每行一條，支援 * 萬用字元；整項目停用由供應商啟停控制）",
+    "access": {
+      "columnModel": "模型",
+      "columnProvider": "供應商",
+      "columnEnabled": "已啟用",
+      "searchPlaceholder": "搜尋模型或供應商",
+      "count": "{{shown}} / {{total}} 個模型",
+      "emptyTitle": "尚無可用模型",
+      "emptyDesc": "OAuth 模型定義與已設定的 API Key 模型會顯示在這裡。",
+      "noSearchResults": "沒有符合的模型",
+      "saveFailed": "更新模型啟用狀態失敗",
+      "lockedByWildcard": "被萬用字元規則 {{rule}} 鎖定",
+      "lockedByEntry": "供應商項目已停用，請先在 AI 供應商頁面啟用。",
+      "unsupportedExclude": "此供應商不支援依模型排除。",
+      "oauthUnsupportedBanner": "目前 CPA 版本不支援 OAuth 模型停用。下方 API Key 模型仍可管理。",
+      "oauthLoadFailed": "載入 OAuth 模型停用規則失敗。",
+      "toggleAria": "切換 {{model}}"
+    }
   }
 }

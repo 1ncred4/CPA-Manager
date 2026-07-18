@@ -1511,7 +1511,7 @@
   },
   "modelsPage": {
     "title": "Model Management",
-    "subtitle": "Manage model disable rules and mappings across all providers.",
+    "subtitle": "Manage model access and mappings across all OAuth and API Key providers.",
     "tabs": {
       "disabled": "Disabled models",
       "mapping": "Model mapping"
@@ -1528,6 +1528,23 @@
     "editMappingTitle": "Edit model mapping",
     "resourceNotFound": "Provider entry not found",
     "mappingEditorLabel": "Model mapping (one per line: name or name=alias)",
-    "excludedEditorLabel": "Excluded models (one per line, wildcards supported; entry disable is controlled on the provider)"
+    "excludedEditorLabel": "Excluded models (one per line, wildcards supported; entry disable is controlled on the provider)",
+    "access": {
+      "columnModel": "Model",
+      "columnProvider": "Provider",
+      "columnEnabled": "Enabled",
+      "searchPlaceholder": "Search models or providers",
+      "count": "{{shown}} / {{total}} models",
+      "emptyTitle": "No models available",
+      "emptyDesc": "OAuth model definitions and configured API Key models will appear here.",
+      "noSearchResults": "No matching models",
+      "saveFailed": "Failed to update model access",
+      "lockedByWildcard": "Locked by wildcard rule {{rule}}",
+      "lockedByEntry": "Provider entry is disabled. Enable it on the AI Providers page.",
+      "unsupportedExclude": "This provider does not support per-model exclusion.",
+      "oauthUnsupportedBanner": "This CPA version does not support OAuth model exclusion. API Key models below can still be managed.",
+      "oauthLoadFailed": "Failed to load OAuth model exclusion rules.",
+      "toggleAria": "Toggle {{model}}"
+    }
   }
 }

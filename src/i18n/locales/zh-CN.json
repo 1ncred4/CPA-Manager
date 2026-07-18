@@ -1511,7 +1511,7 @@
   },
   "modelsPage": {
     "title": "模型管理",
-    "subtitle": "统一管理所有提供商的模型禁用规则与模型映射。",
+    "subtitle": "统一管理所有 OAuth 与 API Key 提供商的模型启用状态与映射。",
     "tabs": {
       "disabled": "模型禁用",
       "mapping": "模型映射"
@@ -1528,6 +1528,23 @@
     "editMappingTitle": "编辑模型映射",
     "resourceNotFound": "未找到该提供商条目",
     "mappingEditorLabel": "模型映射（每行一个：name 或 name=alias）",
-    "excludedEditorLabel": "排除模型（每行一条，支持 * 通配；整条目禁用由提供商启停控制）"
+    "excludedEditorLabel": "排除模型（每行一条，支持 * 通配；整条目禁用由提供商启停控制）",
+    "access": {
+      "columnModel": "模型",
+      "columnProvider": "提供商",
+      "columnEnabled": "已启用",
+      "searchPlaceholder": "搜索模型或提供商",
+      "count": "{{shown}} / {{total}} 个模型",
+      "emptyTitle": "暂无可用模型",
+      "emptyDesc": "OAuth 模型定义与已配置的 API Key 模型会显示在这里。",
+      "noSearchResults": "没有匹配的模型",
+      "saveFailed": "更新模型启用状态失败",
+      "lockedByWildcard": "被通配规则 {{rule}} 锁定",
+      "lockedByEntry": "提供商条目已停用，请先在 AI 提供商页面启用。",
+      "unsupportedExclude": "该提供商不支持按模型排除。",
+      "oauthUnsupportedBanner": "当前 CPA 版本不支持 OAuth 模型禁用。下方 API Key 模型仍可管理。",
+      "oauthLoadFailed": "加载 OAuth 模型禁用规则失败。",
+      "toggleAria": "切换 {{model}}"
+    }
   }
 }
