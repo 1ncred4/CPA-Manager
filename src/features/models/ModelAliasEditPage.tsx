@@ -66,6 +66,7 @@ import {
   type MappingTargetRef,
   type MappingValidationError,
 } from './modelMapping';
+import { listSuspendedCatalog } from './catalogSuspend';
 import { updateApiKeyModels } from './updateApiKeyModels';
 import { applyManagedIdentityExcludeDisplayMask } from './managedIdentityExclude';
 import { syncIdentityAccessOnMappingSave } from './syncIdentityAccessOnMapping';
@@ -306,6 +307,14 @@ export function ModelAliasEditPage() {
           })
         );
       });
+      const catalogSuspendedByResource = new Map<string, string[]>();
+      listSuspendedCatalog(apiBase).forEach((entry) => {
+        if (entry.resourceId && entry.modelId) {
+          const list = catalogSuspendedByResource.get(entry.resourceId) ?? [];
+          if (!list.includes(entry.modelId)) list.push(entry.modelId);
+          catalogSuspendedByResource.set(entry.resourceId, list);
+        }
+      });
       nextResources.forEach((resource) => {
         const logo = PROVIDER_LOGOS[resource.brand];
         const iconSrc =
@@ -315,9 +324,19 @@ export function ModelAliasEditPage() {
         });
         const entryLabel = resource.name ?? resource.identifier;
         const providerLabel = entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
-        accessRowsRaw.push(...buildApiKeyAccessRows({ resource, providerLabel, iconSrc }));
+        accessRowsRaw.push(
+          ...buildApiKeyAccessRows({
+            resource,
+            providerLabel,
+            iconSrc,
+            suspendedCatalogModelIds:
+              resource.brand === 'openaiCompatibility'
+                ? (catalogSuspendedByResource.get(resource.id) ?? [])
+                : undefined,
+          })
+        );
       });
-      // 受管 identity 排除：UI 仍显示启用，其它渠道可选
+      // 受管原名隐藏：底层 excluded/catalog 摘除，UI/picker 仍显示启用可选
       const accessRows = applyManagedIdentityExcludeDisplayMask(accessRowsRaw, apiBase);
 
       const options = buildEnabledMappingOptions(accessRows);

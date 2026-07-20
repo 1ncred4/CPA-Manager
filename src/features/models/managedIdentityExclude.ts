@@ -1,10 +1,14 @@
 /**
- * 受管 identity 排除：网关侧写了 oauth-excluded-models，
+ * 受管「原名隐藏」：网关侧已 excluded / catalog 摘除，
  * 但管理端用 localStorage 记一笔，显示时仍当「启用」——
- * 模型禁用列表 / 其它渠道 picker 可见可选，其它渠道映射不受 UI 屏蔽。
+ * 「模型禁用」列表与映射编辑 picker 仍可见可选，其它渠道映射不受 UI 屏蔽。
+ *
+ * 触发场景：
+ * - 手动映射渠道内禁用目标（同名 / 跨名）
+ * - OAuth 优先 fork=false；无别名时 oauth-excluded + 本标记
+ * - API Key 写 excludedModels / OpenAI catalog 挂起 + 本标记
  *
  * 注意：底层仍是 excluded；若后端对 excluded 模型连 alias 也拒，运行时仍可能失败。
- * 有真实非同名 alias 时优先 fork，不必走这条路径。
  */
 
 import { normalizeApiBase } from '@/utils/connection';
@@ -16,7 +20,11 @@ export const MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT =
 
 type StoreFile = {
   version: 1;
-  /** access-style keys: oauth:<channel>:<modelLower> */
+  /**
+   * access-style keys:
+   * - oauth:<channel>:<modelLower>
+   * - apiKey:<resourceId>:<modelLower>
+   */
   keys: string[];
 };
 
@@ -28,6 +36,10 @@ export function managedIdentityExcludeStorageKey(apiBase: string): string {
 
 export function managedOauthExcludeKey(channel: string, modelId: string): string {
   return `oauth:${normalizeProviderKey(channel)}:${lower(modelId)}`;
+}
+
+export function managedApiKeyExcludeKey(resourceId: string, modelId: string): string {
+  return `apiKey:${resourceId}:${lower(modelId)}`;
 }
 
 function readStore(apiBase: string): StoreFile {
@@ -113,6 +125,22 @@ export function unmarkManagedOauthIdentityExclude(
   unmarkManagedIdentityExclude(apiBase, managedOauthExcludeKey(channel, modelId));
 }
 
+export function markManagedApiKeyIdentityExclude(
+  apiBase: string,
+  resourceId: string,
+  modelId: string
+): void {
+  markManagedIdentityExclude(apiBase, managedApiKeyExcludeKey(resourceId, modelId));
+}
+
+export function unmarkManagedApiKeyIdentityExclude(
+  apiBase: string,
+  resourceId: string,
+  modelId: string
+): void {
+  unmarkManagedIdentityExclude(apiBase, managedApiKeyExcludeKey(resourceId, modelId));
+}
+
 /** 用户在「模型禁用」页主动开关时：去掉受管标记，之后 UI 按真实 excluded 显示 */
 export function clearManagedIdentityExcludeIfPresent(apiBase: string, key: string): void {
   unmarkManagedIdentityExclude(apiBase, key);
@@ -126,8 +154,8 @@ export function __replaceManagedIdentityExcludeForTests(
 }
 
 /**
- * 访问行 / picker：受管 excluded 在 UI 上显示为 enabled，
- * 以便其它渠道仍能选到该模型。
+ * 访问行 / picker：受管 excluded / catalog 挂起在 UI 上显示为 enabled，
+ * 以便「模型禁用」仍显示启用，映射编辑列表仍可选。
  */
 export function applyManagedIdentityExcludeDisplayMask<
   T extends { key: string; source: string; enabled: boolean },
@@ -136,7 +164,7 @@ export function applyManagedIdentityExcludeDisplayMask<
   const managed = listManagedIdentityExcludeKeys(apiBase);
   if (!managed.size) return rows;
   return rows.map((row) => {
-    if (row.source !== 'oauth' || row.enabled) return row;
+    if (row.enabled) return row;
     if (!managed.has(row.key)) return row;
     return { ...row, enabled: true };
   });

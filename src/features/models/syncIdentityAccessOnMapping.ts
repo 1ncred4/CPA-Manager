@@ -11,7 +11,7 @@
  * 3. 同名目标重新启用：fork=true / 清 exclude / 清受管标记
  * 4. 跨名目标重新启用：只清 exclude / 受管标记（alias 由映射保存写回，保持 fork 关）
  *
- * API Key 无 fork：excludedModels / OpenAI catalog（显示层暂不伪装）。
+ * API Key 无 fork：excludedModels / OpenAI catalog + 受管标记（UI 仍显示启用）。
  */
 
 import { stripDisableAllModelsRule } from '@/components/providers/utils';
@@ -32,7 +32,9 @@ import {
 import {
   listManagedIdentityExcludeKeys,
   managedOauthExcludeKey,
+  markManagedApiKeyIdentityExclude,
   markManagedOauthIdentityExclude,
+  unmarkManagedApiKeyIdentityExclude,
   unmarkManagedOauthIdentityExclude,
 } from './managedIdentityExclude';
 import {
@@ -521,6 +523,8 @@ export async function syncIdentityAccessOnMappingSave(input: {
           const entries =
             removed.length > 0 ? removed : ([{ name: modelId }] as ModelAlias[]);
           mergeSuspendedCatalog(input.apiBase, resourceId, modelId, entries);
+          // UI 仍显示启用；映射编辑 picker 仍可选
+          markManagedApiKeyIdentityExclude(input.apiBase, resourceId, modelId);
           models = next;
           result.excluded += 1;
         }
@@ -531,6 +535,7 @@ export async function syncIdentityAccessOnMappingSave(input: {
             : ([{ name: modelId }] as ModelAlias[]);
           const restored = restoreModelToCatalog(models, toRestore);
           models = restored.next;
+          unmarkManagedApiKeyIdentityExclude(input.apiBase, resourceId, modelId);
           result.included += 1;
         }
         await updateApiKeyModels(resource, models);
@@ -544,12 +549,14 @@ export async function syncIdentityAccessOnMappingSave(input: {
 
       disableIds.forEach((modelId) => {
         list = toggleApiKeyExcludedList(list, modelId, true);
+        markManagedApiKeyIdentityExclude(input.apiBase, resourceId, modelId);
         result.excluded += 1;
       });
       enableIds.forEach((modelId) => {
         const next = toggleApiKeyExcludedList(list, modelId, false);
         if (next.length !== list.length) result.included += 1;
         list = next;
+        unmarkManagedApiKeyIdentityExclude(input.apiBase, resourceId, modelId);
       });
       await updateApiKeyExcludedModels(resource, list);
     } catch (err) {

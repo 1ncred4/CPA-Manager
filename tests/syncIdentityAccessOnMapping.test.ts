@@ -9,8 +9,11 @@ import {
   __replaceManagedIdentityExcludeForTests,
   applyManagedIdentityExcludeDisplayMask,
   listManagedIdentityExcludeKeys,
+  managedApiKeyExcludeKey,
   managedOauthExcludeKey,
+  markManagedApiKeyIdentityExclude,
   markManagedOauthIdentityExclude,
+  unmarkManagedApiKeyIdentityExclude,
   unmarkManagedOauthIdentityExclude,
 } from '../src/features/models/managedIdentityExclude';
 import type { MappingTargetRef } from '../src/features/models/modelMapping';
@@ -193,6 +196,36 @@ describe('managed identity exclude display mask', () => {
     expect(masked[1].enabled).toBe(false);
 
     unmarkManagedOauthIdentityExclude(API, 'codex', 'gpt-5.6-luna');
+    expect(listManagedIdentityExcludeKeys(API).has(key)).toBe(false);
+  });
+
+  test('masks apiKey excluded / catalog-suspended rows as enabled for picker UI', () => {
+    installLocalStorage();
+    memory.clear();
+    __replaceManagedIdentityExcludeForTests(API, []);
+
+    const resourceId = 'claude:0:sk';
+    markManagedApiKeyIdentityExclude(API, resourceId, 'claude-sonnet-4-5');
+    const key = managedApiKeyExcludeKey(resourceId, 'claude-sonnet-4-5');
+    expect(listManagedIdentityExcludeKeys(API).has(key)).toBe(true);
+
+    const masked = applyManagedIdentityExcludeDisplayMask(
+      [
+        { key, source: 'apiKey', enabled: false, modelId: 'claude-sonnet-4-5' },
+        {
+          key: `apiKey:${resourceId}:other`,
+          source: 'apiKey',
+          enabled: false,
+          modelId: 'other',
+        },
+      ],
+      API
+    );
+    // 受管隐藏原名：禁用页 / 映射编辑列表仍显示启用
+    expect(masked[0].enabled).toBe(true);
+    expect(masked[1].enabled).toBe(false);
+
+    unmarkManagedApiKeyIdentityExclude(API, resourceId, 'claude-sonnet-4-5');
     expect(listManagedIdentityExcludeKeys(API).has(key)).toBe(false);
   });
 });

@@ -29,6 +29,9 @@ import {
   unclaimManualMapping,
 } from './mappingClaims';
 import {
+  listSuspendedCatalog,
+} from './catalogSuspend';
+import {
   clearSuspendedForAlias,
   listAllSuspended,
   listSuspendedForAlias,
@@ -117,6 +120,8 @@ export function useModelMappingList(): UseModelMappingListResult {
   const [suspendedEpoch, setSuspendedEpoch] = useState(0);
   /** 递增以重读「手动认领」 */
   const [claimsEpoch, setClaimsEpoch] = useState(0);
+  /** 递增以重读受管原名隐藏标记（不改真实 accessRows） */
+  const [managedExcludeEpoch, setManagedExcludeEpoch] = useState(0);
 
   const loadRequestRef = useRef(0);
   const workbenchRef = useRef(workbench);
@@ -216,6 +221,15 @@ export function useModelMappingList(): UseModelMappingListResult {
       );
     });
 
+    const catalogSuspendedByResource = new Map<string, string[]>();
+    listSuspendedCatalog(apiBase).forEach((entry) => {
+      if (entry.resourceId && entry.modelId) {
+        const list = catalogSuspendedByResource.get(entry.resourceId) ?? [];
+        if (!list.includes(entry.modelId)) list.push(entry.modelId);
+        catalogSuspendedByResource.set(entry.resourceId, list);
+      }
+    });
+
     resources.forEach((resource) => {
       const logo = PROVIDER_LOGOS[resource.brand];
       const iconSrc =
@@ -230,13 +244,18 @@ export function useModelMappingList(): UseModelMappingListResult {
           resource,
           providerLabel,
           iconSrc,
+          suspendedCatalogModelIds:
+            resource.brand === 'openaiCompatibility'
+              ? (catalogSuspendedByResource.get(resource.id) ?? [])
+              : undefined,
         })
       );
     });
 
+    // 保留真实 enabled；UI/picker 再套受管 mask，避免原名回到自动映射
     setAccessRows(built);
     setLoading(false);
-  }, [resolvedTheme, t]);
+  }, [apiBase, resolvedTheme, t]);
 
   useEffect(() => {
     void loadAll();
@@ -262,14 +281,18 @@ export function useModelMappingList(): UseModelMappingListResult {
       if (event.key.includes('suspended-model-mappings')) setSuspendedEpoch((n) => n + 1);
       if (event.key.includes('manual-mapping-claims')) setClaimsEpoch((n) => n + 1);
       if (event.key.includes('managed-identity-exclude')) {
-        // 触发 access 行重建（依赖 excluded/oauth 重算后的 mask）
-        setAccessRows((prev) => applyManagedIdentityExcludeDisplayMask(prev, apiBase));
+        // 只刷新显示层 mask；真实 accessRows 保持 gateway 态
+        setManagedExcludeEpoch((n) => n + 1);
+      }
+      if (event.key.includes('suspended-model-catalog')) {
+        // OpenAI catalog 挂起变化 → 重建 access 行
+        void loadAll();
       }
     };
     const onManagedExclude = (event: Event) => {
       const detail = (event as CustomEvent<{ apiBase?: string }>).detail;
       if (detail?.apiBase && detail.apiBase !== apiBase) return;
-      setAccessRows((prev) => applyManagedIdentityExcludeDisplayMask(prev, apiBase));
+      setManagedExcludeEpoch((n) => n + 1);
     };
     window.addEventListener(SUSPENDED_MAPPINGS_CHANGED_EVENT, onSuspendedChanged);
     window.addEventListener(MANUAL_MAPPING_CLAIMS_CHANGED_EVENT, onClaimsChanged);
@@ -281,7 +304,7 @@ export function useModelMappingList(): UseModelMappingListResult {
       window.removeEventListener(MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT, onManagedExclude);
       window.removeEventListener('storage', onStorage);
     };
-  }, [apiBase]);
+  }, [apiBase, loadAll]);
 
   // Rebuild access rows when theme/resources change without full reload
   useEffect(() => {
@@ -299,6 +322,14 @@ export function useModelMappingList(): UseModelMappingListResult {
         })
       );
     });
+    const catalogSuspendedByResource = new Map<string, string[]>();
+    listSuspendedCatalog(apiBase).forEach((entry) => {
+      if (entry.resourceId && entry.modelId) {
+        const list = catalogSuspendedByResource.get(entry.resourceId) ?? [];
+        if (!list.includes(entry.modelId)) list.push(entry.modelId);
+        catalogSuspendedByResource.set(entry.resourceId, list);
+      }
+    });
     allApiKeyResources.forEach((resource) => {
       const logo = PROVIDER_LOGOS[resource.brand];
       const iconSrc =
@@ -308,11 +339,23 @@ export function useModelMappingList(): UseModelMappingListResult {
       });
       const entryLabel = resource.name ?? resource.identifier;
       const providerLabel = entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
-      built.push(...buildApiKeyAccessRows({ resource, providerLabel, iconSrc }));
+      built.push(
+        ...buildApiKeyAccessRows({
+          resource,
+          providerLabel,
+          iconSrc,
+          suspendedCatalogModelIds:
+            resource.brand === 'openaiCompatibility'
+              ? (catalogSuspendedByResource.get(resource.id) ?? [])
+              : undefined,
+        })
+      );
     });
-    setAccessRows(applyManagedIdentityExcludeDisplayMask(built, apiBase));
+    // 真实 enabled；mask 只用于 picker
+    setAccessRows(built);
   }, [allApiKeyResources, apiBase, excluded, loading, oauthModels, resolvedTheme, t]);
 
+  /** 真实启用集合：自动映射 / currentlyEnabled 用，受管原名隐藏保持 disabled */
   const enabledKeySet = useMemo(() => {
     const set = new Set<string>();
     accessRows.forEach((row) => {
@@ -320,6 +363,12 @@ export function useModelMappingList(): UseModelMappingListResult {
     });
     return set;
   }, [accessRows]);
+
+  /** 显示层 access：受管 exclude 伪装启用，供映射编辑 picker */
+  const displayAccessRows = useMemo(() => {
+    void managedExcludeEpoch;
+    return applyManagedIdentityExcludeDisplayMask(accessRows, apiBase);
+  }, [accessRows, apiBase, managedExcludeEpoch]);
 
   const { manualRows, autoRows, rows } = useMemo(() => {
     const oauthDisplayNames = buildOauthDisplayNameMap(oauthModels);
@@ -422,7 +471,10 @@ export function useModelMappingList(): UseModelMappingListResult {
     [search, unmappedRows]
   );
 
-  const enabledOptions = useMemo(() => buildEnabledMappingOptions(accessRows), [accessRows]);
+  const enabledOptions = useMemo(
+    () => buildEnabledMappingOptions(displayAccessRows),
+    [displayAccessRows]
+  );
 
   // 重名校验只挡手动渠道；自动渠道名与手动重名时会并入手动
   const existingAliasKeys = useMemo(
