@@ -191,6 +191,55 @@ const findSection = (sections: Record<string, string>, ...names: string[]): stri
   return undefined;
 };
 
+/** All sections whose header starts with the given prefix (e.g. "API REQUEST"). */
+const findSectionsByPrefix = (sections: Record<string, string>, prefix: string): string[] => {
+  const upper = prefix.toUpperCase();
+  return Object.entries(sections)
+    .filter(([key]) => key === upper || key.startsWith(`${upper} `) || key.startsWith(upper))
+    .map(([, value]) => value)
+    .filter(Boolean);
+};
+
+const extractModelFromText = (text: string): string | undefined => {
+  const parsed = tryParseJson(text);
+  const fromJson = extractModelFromBody(parsed);
+  if (fromJson) return fromJson;
+  // Prefer the last "model" occurrence — in API REQUEST dumps the real upstream model
+  // usually appears after the client alias in the file, but when scanning a single section
+  // there is typically only one.
+  const matches = [...text.matchAll(/"model"\s*:\s*"([^"\\]+)"/g)];
+  if (matches.length === 0) return undefined;
+  return matches[matches.length - 1]?.[1];
+};
+
+/** Prefer human-readable titles when upstream returns an HTML error page. */
+const normalizeErrorMessage = (message: string): string => {
+  const trimmed = message.trim();
+  if (!trimmed) return trimmed;
+
+  const titleMatch = trimmed.match(/<title>\s*([^<]+?)\s*<\/title>/i);
+  if (titleMatch?.[1]) return titleMatch[1].trim();
+
+  const h1Match = trimmed.match(/<h1>\s*([^<]+?)\s*<\/h1>/i);
+  if (h1Match?.[1]) return h1Match[1].trim();
+
+  if (/<\/?[a-z][\s\S]*>/i.test(trimmed)) {
+    const stripped = trimmed
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&amp;/gi, '&')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (stripped) return stripped;
+  }
+
+  return trimmed;
+};
+
 const extractField = (block: string, field: string): string | undefined => {
   const regex = new RegExp(`^\\s*${field}\\s*[:=]\\s*(.+?)\\s*$`, 'im');
   const match = block.match(regex);
@@ -329,29 +378,61 @@ export const parseErrorLogContent = (text: string): ParsedErrorLogContent => {
     if (requestId) result.requestId = requestId;
   }
 
+  // Prefer the actual upstream model from === API REQUEST N === dumps.
+  // Client REQUEST BODY often only has the mapped alias (e.g. claude-opus-4-8),
+  // while API REQUEST body has the real target (e.g. stepfun-ai/Step-3.7-Flash).
+  const apiRequestSections = findSectionsByPrefix(sections, 'API REQUEST');
+  for (let i = apiRequestSections.length - 1; i >= 0; i -= 1) {
+    const model = extractModelFromText(apiRequestSections[i]);
+    if (model) {
+      result.model = model;
+      break;
+    }
+  }
+
   const requestBody = findSection(sections, 'REQUEST BODY', 'BODY', 'REQUEST PAYLOAD');
-  if (requestBody) {
-    const parsedBody = tryParseJson(requestBody);
-    const model = extractModelFromBody(parsedBody);
+  if (!result.model && requestBody) {
+    const model = extractModelFromText(requestBody);
     if (model) result.model = model;
   }
 
-  const response =
-    findSection(sections, 'API RESPONSE', 'RESPONSE', 'RESPONSE BODY', 'ERROR RESPONSE') ||
-    // Fallback: scan whole text if section headers are missing
-    undefined;
+  // Collect status / error from response-like sections. Prefer final RESPONSE status,
+  // and API RESPONSE error body (often richer than the outer HTML/gateway page).
+  const apiResponseSections = findSectionsByPrefix(sections, 'API RESPONSE');
+  const finalResponse =
+    findSection(sections, 'RESPONSE') ||
+    findSection(sections, 'RESPONSE BODY', 'ERROR RESPONSE');
+  const responseCandidates = [
+    ...apiResponseSections,
+    ...(finalResponse ? [finalResponse] : []),
+  ];
 
-  const responseText = response ?? (Object.keys(sections).length <= 1 ? text : '');
-  if (responseText) {
-    const statusCode = extractStatusCode(responseText);
-    if (statusCode !== undefined) result.statusCode = statusCode;
+  if (responseCandidates.length === 0 && Object.keys(sections).length <= 1) {
+    responseCandidates.push(text);
+  }
 
-    const parsedResponse = tryParseJson(responseText);
-    let errorMessage = digErrorMessage(parsedResponse);
-    if (!errorMessage) {
-      errorMessage = firstNonEmptyLine(responseText);
+  for (const responseText of responseCandidates) {
+    if (result.statusCode === undefined) {
+      const statusCode = extractStatusCode(responseText);
+      if (statusCode !== undefined) result.statusCode = statusCode;
     }
-    if (errorMessage) result.errorMessage = truncateMessage(errorMessage);
+
+    if (!result.errorMessage) {
+      const parsedResponse = tryParseJson(responseText);
+      let errorMessage = digErrorMessage(parsedResponse);
+      if (!errorMessage) {
+        errorMessage = firstNonEmptyLine(responseText);
+      }
+      if (errorMessage) {
+        result.errorMessage = truncateMessage(normalizeErrorMessage(errorMessage));
+      }
+    }
+  }
+
+  // Final RESPONSE often has "Status: 502" when API RESPONSE is only a JSON/HTML body.
+  if (finalResponse) {
+    const statusCode = extractStatusCode(finalResponse);
+    if (statusCode !== undefined) result.statusCode = statusCode;
   }
 
   // If no dedicated response section yielded a status, try scanning whole file.
@@ -361,9 +442,13 @@ export const parseErrorLogContent = (text: string): ParsedErrorLogContent => {
   }
 
   // Last-resort model scan if body section wasn't present as JSON.
+  // Prefer the last occurrence so API REQUEST models win over client aliases when
+  // section headers are missing or incomplete.
   if (!result.model) {
-    const modelMatch = text.match(/"model"\s*:\s*"([^"\\]+)"/);
-    if (modelMatch?.[1]) result.model = modelMatch[1];
+    const matches = [...text.matchAll(/"model"\s*:\s*"([^"\\]+)"/g)];
+    if (matches.length > 0) {
+      result.model = matches[matches.length - 1]?.[1];
+    }
   }
 
   return result;

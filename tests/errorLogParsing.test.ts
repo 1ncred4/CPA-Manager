@@ -94,6 +94,35 @@ status: 429
     expect(parsed.statusCode).toBe(429);
     expect(parsed.errorMessage).toBe('Rate limit exceeded');
   });
+
+  test('prefers upstream model from API REQUEST over client REQUEST BODY alias', () => {
+    const text = `=== REQUEST INFO ===
+URL: /v1/messages?beta=true
+Method: POST
+Timestamp: 2026-07-20T09:28:43.189030811+08:00
+
+=== REQUEST BODY ===
+{"model":"claude-opus-4-8","messages":[{"role":"user","content":"hi"}]}
+
+=== API REQUEST 1 ===
+Upstream URL: https://api-inference.modelscope.cn/v1/messages?beta=true
+Body:
+{"model":"stepfun-ai/Step-3.7-Flash","messages":[{"role":"user","content":"hi"}]}
+
+=== API RESPONSE ===
+{"type":"error","error":{"type":"api_error","message":"<html>\\r\\n<head><title>502 Bad Gateway</title></head>\\r\\n<body>\\r\\n<center><h1>502 Bad Gateway</h1></center>\\r\\n</body>\\r\\n</html>"}}
+
+=== RESPONSE ===
+Status: 502
+{"type":"error","error":{"type":"api_error","message":"<html>\\r\\n<head><title>502 Bad Gateway</title></head></html>"}}
+`;
+    const parsed = parseErrorLogContent(text);
+    expect(parsed.model).toBe('stepfun-ai/Step-3.7-Flash');
+    expect(parsed.path).toBe('/v1/messages');
+    expect(parsed.method).toBe('POST');
+    expect(parsed.statusCode).toBe(502);
+    expect(parsed.errorMessage).toBe('502 Bad Gateway');
+  });
 });
 
 describe('buildErrorLogSummary', () => {
