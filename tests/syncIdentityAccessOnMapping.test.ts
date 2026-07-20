@@ -56,8 +56,60 @@ describe('partitionIdentityAccessTargets', () => {
       selectedTargets: [other],
       suspendedTargets: [{ target: identity }],
     });
+    // 跨名 other 活跃 → toClearExclude；同名 identity 挂起 → toDisable
     expect(result.toDisable).toEqual([identity]);
     expect(result.toEnable).toEqual([]);
+    expect(result.toClearExclude).toEqual([other]);
+  });
+
+  test('channel-disabled cross-name targets also hide original name', () => {
+    const alias = 'my-chat';
+    const cross = oauth('claude', 'claude-sonnet-4-5');
+    const other = oauth('claude', 'other-model');
+    const result = partitionIdentityAccessTargets({
+      alias,
+      selectedTargets: [other],
+      suspendedTargets: [{ target: cross }],
+    });
+    // 跨名挂起也要进 toDisable，否则剪枝 alias 后原名会回到模型列表
+    expect(result.toDisable).toEqual([cross]);
+    expect(result.toEnable).toEqual([]);
+    expect(result.toClearExclude).toEqual([other]);
+  });
+
+  test('re-enabling identity restores fork; re-enabling cross-name only clears exclude', () => {
+    const alias = 'gpt-5.6-luna';
+    const identity = oauth('codex', 'gpt-5.6-luna');
+    const cross = oauth('claude', 'claude-sonnet-4-5');
+    const result = partitionIdentityAccessTargets({
+      alias,
+      selectedTargets: [identity, cross],
+      suspendedTargets: [],
+    });
+    expect(result.toEnable).toEqual([identity]);
+    expect(result.toClearExclude).toEqual([cross]);
+    expect(result.toDisable).toEqual([]);
+  });
+
+  test('abandoned targets (permanent remove / delete channel) restore original name', () => {
+    const alias = 'my-chat';
+    const cross = oauth('claude', 'claude-sonnet-4-5');
+    const identity = oauth('codex', 'my-chat');
+    const kept = oauth('claude', 'other-model');
+    const result = partitionIdentityAccessTargets({
+      alias,
+      selectedTargets: [kept],
+      suspendedTargets: [],
+      abandonedTargets: [cross, identity, kept],
+    });
+    // kept still selected → not abandoned
+    expect(result.toDisable).toEqual([]);
+    expect(result.toEnable).toEqual([identity]);
+    expect(result.toClearExclude.map((t) => t.modelId).sort()).toEqual([
+      'claude-sonnet-4-5',
+      'my-chat',
+      'other-model',
+    ]);
   });
 });
 

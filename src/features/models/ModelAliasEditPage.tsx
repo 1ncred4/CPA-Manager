@@ -116,6 +116,11 @@ export function ModelAliasEditPage() {
   /** 编辑页本地挂起目标（模型禁用时剪枝），可在 tag 列表中删除 */
   const [suspendedTargets, setSuspendedTargets] = useState<SuspendedMapping[]>([]);
   const [baselineSuspendedKeys, setBaselineSuspendedKeys] = useState<string[]>([]);
+  /**
+   * 打开编辑页时该 alias 曾持有的全部目标（活跃 + 渠道内挂起）。
+   * 用于计算彻底移除项，保存时清掉渠道禁用写过的受管 exclude。
+   */
+  const [baselineHeldTargets, setBaselineHeldTargets] = useState<MappingTargetRef[]>([]);
   const [pickerSearch, setPickerSearch] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -438,6 +443,15 @@ export function ModelAliasEditPage() {
         setBaselineSuspendedKeys(
           suspended.map((entry) => `${toAliasKey(entry.alias)}|${mappingTargetKey(entry.target)}`)
         );
+        const held: MappingTargetRef[] = [...targets];
+        const heldKeys = new Set(targets.map(mappingTargetKey));
+        suspended.forEach((entry) => {
+          const key = mappingTargetKey(entry.target);
+          if (heldKeys.has(key)) return;
+          heldKeys.add(key);
+          held.push(entry.target);
+        });
+        setBaselineHeldTargets(held);
       } else {
         setTargetChipMeta(chipMeta);
         setAlias('');
@@ -445,6 +459,7 @@ export function ModelAliasEditPage() {
         setBaselineTargets([]);
         setSuspendedTargets([]);
         setBaselineSuspendedKeys([]);
+        setBaselineHeldTargets([]);
         const preselected = new Set<string>();
         if (preselectFromParams) {
           const optionKeys = new Set(options.map((opt) => mappingTargetKey(opt)));
@@ -560,8 +575,9 @@ export function ModelAliasEditPage() {
 
   /**
    * 渠道级启停：先改 selectedKeys / suspendedTargets。
-   * 跨名目标：保存时只剪枝本渠道 alias（真正渠道内）。
-   * 同名 identity（alias===modelId）：保存时会写全局排除，否则原生路由仍可达。
+   * 保存时：剪枝/恢复本渠道 alias，并对挂起目标隐藏原名入口
+   * （OAuth fork=false 或受管 exclude；API Key excluded/catalog），
+   * 避免原名重新出现在模型列表。
    */
   const setChannelTargetEnabled = (key: string, enabled: boolean) => {
     const ref = resolveTargetRef(key);
@@ -777,18 +793,26 @@ export function ModelAliasEditPage() {
     };
 
     const applyIdentityAccess = async (finalAliasName: string) => {
+      const claimedKeys = new Set([
+        ...selectedTargets.map(mappingTargetKey),
+        ...suspendedTargets.map((entry) => mappingTargetKey(entry.target)),
+      ]);
+      const abandonedTargets = baselineHeldTargets.filter(
+        (target) => !claimedKeys.has(mappingTargetKey(target))
+      );
       const sync = await syncIdentityAccessOnMappingSave({
         apiBase,
         alias: finalAliasName,
         selectedTargets,
         suspendedTargets,
+        abandonedTargets,
         resources,
       });
       if (sync.failed.length) {
         showNotification(
           t('modelsPage.mapping.identityAccessSyncFailed', {
             defaultValue:
-              '映射已保存，但同名目标的原名启停同步失败：{{detail}}',
+              '映射已保存，但映射目标的原名启停同步失败：{{detail}}',
             detail: sync.failed.join('; '),
           }),
           'warning'
@@ -797,7 +821,7 @@ export function ModelAliasEditPage() {
         showNotification(
           t('modelsPage.mapping.identityAccessForked', {
             defaultValue:
-              '已关闭 {{count}} 个同名目标的原名入口（fork=关，模型仍可通过其它别名使用）',
+              '已关闭 {{count}} 个映射目标的原名入口（fork=关，模型仍可通过其它别名使用）',
             count: sync.forked,
           }),
           'success'
@@ -806,7 +830,7 @@ export function ModelAliasEditPage() {
         showNotification(
           t('modelsPage.mapping.identityAccessExcluded', {
             defaultValue:
-              '已关闭 {{count}} 个同名目标的原名路由；管理端仍显示启用，其它渠道可继续映射',
+              '已关闭 {{count}} 个映射目标的原名路由；管理端仍显示启用，其它渠道可继续映射',
             count: sync.excluded,
           }),
           'success'
@@ -1061,6 +1085,7 @@ export function ModelAliasEditPage() {
     allowNextNavigation,
     apiBase,
     baselineAlias,
+    baselineHeldTargets,
     baselineTargets,
     existingAliasKeys,
     handleBack,

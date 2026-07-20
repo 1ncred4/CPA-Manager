@@ -1,11 +1,15 @@
 /**
- * 同名 identity 目标（alias === modelId）无法靠剪枝 alias 摘掉。
+ * 渠道内禁用映射目标时，同步隐藏「原名」入口，避免剪枝 alias 后原名重新出现在模型列表。
+ *
+ * 同名 identity（alias === modelId）无法靠剪枝 alias 摘掉；
+ * 跨名目标剪枝 alias 后若无其它别名，原名同样会回到网关列表——两边都要处理。
  *
  * OAuth：
  * 1. 已有用户非同名 alias → fork=false 关原名（不 excluded，不污染列表）
  * 2. 没有任何用户别名 → oauth-excluded 关路由 + localStorage 受管标记
  *    管理端显示仍为「启用」，其它渠道 picker 仍可见可选
- * 3. 启用时：fork=true / 清 exclude / 清受管标记
+ * 3. 同名目标重新启用：fork=true / 清 exclude / 清受管标记
+ * 4. 跨名目标重新启用：只清 exclude / 受管标记（alias 由映射保存写回，保持 fork 关）
  *
  * API Key 无 fork：excludedModels / OpenAI catalog（显示层暂不伪装）。
  */
@@ -26,6 +30,8 @@ import {
   takeSuspendedCatalog,
 } from './catalogSuspend';
 import {
+  listManagedIdentityExcludeKeys,
+  managedOauthExcludeKey,
   markManagedOauthIdentityExclude,
   unmarkManagedOauthIdentityExclude,
 } from './managedIdentityExclude';
@@ -58,24 +64,77 @@ export function partitionIdentityAccessTargets(input: {
   alias: string;
   selectedTargets: MappingTargetRef[];
   suspendedTargets: Array<{ target: MappingTargetRef }>;
+  /**
+   * 本 alias 上一轮曾持有、现已彻底移除的目标（永久 × / 删除整个渠道）。
+   * 渠道内禁用写过的受管 exclude 必须清掉，否则原名永久消失。
+   */
+  abandonedTargets?: MappingTargetRef[];
 }): {
+  /**
+   * 同名 identity 重新勾选/被彻底移除后恢复：fork=true 开原名。
+   * 跨名目标重新勾选不在此列——原名应继续隐藏（仅靠自定义 alias 暴露）。
+   */
   toEnable: MappingTargetRef[];
+  /**
+   * 渠道内禁用的全部目标（含跨名）：隐藏原名。
+   * 跨名剪枝 alias 后若只靠挂起灰标，原名会回到自动/网关列表。
+   */
   toDisable: MappingTargetRef[];
+  /**
+   * 活跃选中的跨名目标 + 已彻底移除的目标：清掉渠道禁用时写入的受管 exclude。
+   * 不强制 fork=true（新建映射默认 fork 关）。
+   */
+  toClearExclude: MappingTargetRef[];
 } {
   const alias = input.alias.trim();
-  if (!alias) return { toEnable: [], toDisable: [] };
+  if (!alias) return { toEnable: [], toDisable: [], toClearExclude: [] };
 
-  const selectedIdentity = identityTargets(alias, input.selectedTargets);
-  const suspendedIdentity = identityTargets(
-    alias,
-    input.suspendedTargets.map((entry) => entry.target)
+  const suspendedAll = input.suspendedTargets
+    .map((entry) => entry.target)
+    .filter((target) => Boolean(target?.modelId?.trim()));
+  const suspendedKeys = new Set(suspendedAll.map(mappingTargetKey));
+
+  const activeSelected = input.selectedTargets.filter(
+    (target) => !suspendedKeys.has(mappingTargetKey(target))
+  );
+  const selectedIdentity = identityTargets(alias, activeSelected);
+  const selectedIdentityKeys = new Set(selectedIdentity.map(mappingTargetKey));
+  const activeCrossName = activeSelected.filter(
+    (target) => !selectedIdentityKeys.has(mappingTargetKey(target))
   );
 
-  const suspendedKeys = new Set(suspendedIdentity.map(mappingTargetKey));
-  const toEnable = selectedIdentity.filter((t) => !suspendedKeys.has(mappingTargetKey(t)));
-  const toDisable = suspendedIdentity;
+  const claimedKeys = new Set([
+    ...activeSelected.map(mappingTargetKey),
+    ...suspendedAll.map(mappingTargetKey),
+  ]);
+  const abandoned = (input.abandonedTargets ?? []).filter((target) => {
+    if (!target?.modelId?.trim()) return false;
+    return !claimedKeys.has(mappingTargetKey(target));
+  });
+  const abandonedIdentity = identityTargets(alias, abandoned);
+  const abandonedIdentityKeys = new Set(abandonedIdentity.map(mappingTargetKey));
+  const abandonedCrossName = abandoned.filter(
+    (target) => !abandonedIdentityKeys.has(mappingTargetKey(target))
+  );
 
-  return { toEnable, toDisable };
+  // 去重合并
+  const mergeUnique = (list: MappingTargetRef[]): MappingTargetRef[] => {
+    const seen = new Set<string>();
+    const out: MappingTargetRef[] = [];
+    list.forEach((target) => {
+      const key = mappingTargetKey(target);
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(target);
+    });
+    return out;
+  };
+
+  return {
+    toEnable: mergeUnique([...selectedIdentity, ...abandonedIdentity]),
+    toDisable: suspendedAll,
+    toClearExclude: mergeUnique([...activeCrossName, ...abandonedCrossName, ...abandonedIdentity]),
+  };
 }
 
 /** 用户侧非同名 alias（排除历史 cpa.off 锚点） */
@@ -239,6 +298,8 @@ export async function syncIdentityAccessOnMappingSave(input: {
   selectedTargets: MappingTargetRef[];
   suspendedTargets: Array<{ target: MappingTargetRef }>;
   resources: ProviderResource[];
+  /** 上一轮目标中现已彻底移除的项（见 partitionIdentityAccessTargets） */
+  abandonedTargets?: MappingTargetRef[];
 }): Promise<IdentityAccessSyncResult> {
   const result: IdentityAccessSyncResult = {
     forked: 0,
@@ -246,33 +307,46 @@ export async function syncIdentityAccessOnMappingSave(input: {
     included: 0,
     failed: [],
   };
-  const { toEnable, toDisable } = partitionIdentityAccessTargets({
+  const { toEnable, toDisable, toClearExclude } = partitionIdentityAccessTargets({
     alias: input.alias,
     selectedTargets: input.selectedTargets,
     suspendedTargets: input.suspendedTargets,
+    abandonedTargets: input.abandonedTargets,
   });
-  if (!toEnable.length && !toDisable.length) return result;
+  if (!toEnable.length && !toDisable.length && !toClearExclude.length) return result;
 
   const oauthDisableByChannel = new Map<string, string[]>();
   const oauthEnableByChannel = new Map<string, string[]>();
+  const oauthClearExcludeByChannel = new Map<string, string[]>();
+  const pushModelId = (map: Map<string, string[]>, key: string, modelId: string) => {
+    const list = map.get(key) ?? [];
+    if (!list.some((id) => lower(id) === lower(modelId))) list.push(modelId);
+    map.set(key, list);
+  };
   toDisable.forEach((target) => {
     if (target.source !== 'oauth') return;
     const channel = normalizeProviderKey(target.channel);
     if (!channel) return;
-    const list = oauthDisableByChannel.get(channel) ?? [];
-    if (!list.some((id) => lower(id) === lower(target.modelId))) list.push(target.modelId);
-    oauthDisableByChannel.set(channel, list);
+    pushModelId(oauthDisableByChannel, channel, target.modelId);
   });
   toEnable.forEach((target) => {
     if (target.source !== 'oauth') return;
     const channel = normalizeProviderKey(target.channel);
     if (!channel) return;
-    const list = oauthEnableByChannel.get(channel) ?? [];
-    if (!list.some((id) => lower(id) === lower(target.modelId))) list.push(target.modelId);
-    oauthEnableByChannel.set(channel, list);
+    pushModelId(oauthEnableByChannel, channel, target.modelId);
+  });
+  toClearExclude.forEach((target) => {
+    if (target.source !== 'oauth') return;
+    const channel = normalizeProviderKey(target.channel);
+    if (!channel) return;
+    pushModelId(oauthClearExcludeByChannel, channel, target.modelId);
   });
 
-  if (oauthDisableByChannel.size || oauthEnableByChannel.size) {
+  if (
+    oauthDisableByChannel.size ||
+    oauthEnableByChannel.size ||
+    oauthClearExcludeByChannel.size
+  ) {
     try {
       const { map: aliasMap, unsupported: aliasUnsupported } = await loadOauthAliasSafe();
       const { map: excludedMap, unsupported: excludedUnsupported } =
@@ -284,6 +358,7 @@ export async function syncIdentityAccessOnMappingSave(input: {
         const channels = new Set([
           ...oauthDisableByChannel.keys(),
           ...oauthEnableByChannel.keys(),
+          ...oauthClearExcludeByChannel.keys(),
         ]);
         const workingAlias: Record<string, OAuthModelAliasEntry[]> = { ...aliasMap };
         const workingExcluded: Record<string, string[]> = { ...excludedMap };
@@ -314,7 +389,7 @@ export async function syncIdentityAccessOnMappingSave(input: {
               }
             }
 
-            // 无用户别名：excluded 关路由 + 受管标记（UI 仍显示启用）
+            // 无用户别名（含跨名剪枝后仅挂起）：excluded 关路由 + 受管标记（UI 仍显示启用）
             if (excludedUnsupported) {
               result.failed.push(`oauth-no-fork-or-exclude:${channel}:${modelId}`);
               continue;
@@ -325,6 +400,7 @@ export async function syncIdentityAccessOnMappingSave(input: {
             result.excluded += 1;
           }
 
+          // 同名目标重新启用：fork=true + 清 exclude
           for (const modelId of oauthEnableByChannel.get(channel) ?? []) {
             let handled = false;
             if (!aliasUnsupported) {
@@ -345,6 +421,32 @@ export async function syncIdentityAccessOnMappingSave(input: {
             }
             unmarkManagedOauthIdentityExclude(input.apiBase, channel, modelId);
             if (handled) result.included += 1;
+          }
+
+          // 跨名目标重新启用：只清受管 exclude，不强制 fork=true
+          for (const modelId of oauthClearExcludeByChannel.get(channel) ?? []) {
+            // 若同批 identity enable 已处理过，跳过
+            if (
+              (oauthEnableByChannel.get(channel) ?? []).some(
+                (id) => lower(id) === lower(modelId)
+              )
+            ) {
+              continue;
+            }
+            let handled = false;
+            if (!excludedUnsupported) {
+              const before = rules.length;
+              rules = updateOAuthExcludedRule(rules, modelId, false);
+              if (rules.length < before) {
+                excludedDirty.add(channel);
+                handled = true;
+              }
+            }
+            const wasManaged = listManagedIdentityExcludeKeys(input.apiBase).has(
+              managedOauthExcludeKey(channel, modelId)
+            );
+            unmarkManagedOauthIdentityExclude(input.apiBase, channel, modelId);
+            if (handled || wasManaged) result.included += 1;
           }
 
           workingAlias[channel] = entries;
@@ -379,19 +481,20 @@ export async function syncIdentityAccessOnMappingSave(input: {
   }
 
   // --- API Key ---
+  // 渠道内禁用：写 excluded / catalog 挂起，避免原名继续出现在模型列表。
+  // 重新启用：
+  //   - 同名 identity：恢复 catalog / 清 exclude
+  //   - 跨名：同样清 exclude（映射 alias 由保存路径写回）
   const apiDisableByResource = new Map<string, string[]>();
   const apiEnableByResource = new Map<string, string[]>();
   toDisable.forEach((target) => {
     if (target.source !== 'apiKey') return;
-    const list = apiDisableByResource.get(target.resourceId) ?? [];
-    if (!list.some((id) => lower(id) === lower(target.modelId))) list.push(target.modelId);
-    apiDisableByResource.set(target.resourceId, list);
+    pushModelId(apiDisableByResource, target.resourceId, target.modelId);
   });
-  toEnable.forEach((target) => {
+  // API Key 无 fork：同名/跨名重新启用都需要从 excluded/catalog 恢复
+  [...toEnable, ...toClearExclude].forEach((target) => {
     if (target.source !== 'apiKey') return;
-    const list = apiEnableByResource.get(target.resourceId) ?? [];
-    if (!list.some((id) => lower(id) === lower(target.modelId))) list.push(target.modelId);
-    apiEnableByResource.set(target.resourceId, list);
+    pushModelId(apiEnableByResource, target.resourceId, target.modelId);
   });
 
   const resourceIds = new Set([

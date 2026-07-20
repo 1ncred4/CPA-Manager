@@ -31,6 +31,7 @@ import {
 import {
   clearSuspendedForAlias,
   listAllSuspended,
+  listSuspendedForAlias,
   mergeSuspendedIntoFederatedRows,
   SUSPENDED_MAPPINGS_CHANGED_EVENT,
 } from './mappingSuspend';
@@ -52,11 +53,14 @@ import {
   filterFederatedMappingRows,
   filterUnmappedModels,
   isManualMappingRow,
+  mappingTargetKey,
   toAliasKey,
   type FederatedMappingRow,
   type MappingPickerOption,
+  type MappingTargetRef,
   type UnmappedModelRow,
 } from './modelMapping';
+import { syncIdentityAccessOnMappingSave } from './syncIdentityAccessOnMapping';
 import { updateApiKeyModels } from './updateApiKeyModels';
 
 export type UseModelMappingListResult = {
@@ -455,6 +459,32 @@ export function useModelMappingList(): UseModelMappingListResult {
         confirmText: t('common.confirm'),
         onConfirm: async () => {
           try {
+            // 删除前收集曾持有的目标（含渠道内挂起），用于恢复原名入口
+            const suspended = listSuspendedForAlias(apiBase, row.alias);
+            const held: MappingTargetRef[] = [];
+            const heldKeys = new Set<string>();
+            row.targets.forEach((target) => {
+              const ref: MappingTargetRef =
+                target.source === 'oauth'
+                  ? { source: 'oauth', channel: target.channel, modelId: target.modelId }
+                  : {
+                      source: 'apiKey',
+                      resourceId: target.resourceId,
+                      brand: target.brand,
+                      modelId: target.modelId,
+                    };
+              const key = mappingTargetKey(ref);
+              if (heldKeys.has(key)) return;
+              heldKeys.add(key);
+              held.push(ref);
+            });
+            suspended.forEach((entry) => {
+              const key = mappingTargetKey(entry.target);
+              if (heldKeys.has(key)) return;
+              heldKeys.add(key);
+              held.push(entry.target);
+            });
+
             clearSuspendedForAlias(apiBase, row.alias);
             // 清除本地手动认领，使同名模型回到自动映射
             unclaimManualMapping(apiBase, row.alias);
@@ -513,6 +543,18 @@ export function useModelMappingList(): UseModelMappingListResult {
                 await updateApiKeyModels(resource, nextModels);
               })
             );
+
+            // 清掉渠道内禁用时写的受管 exclude / 恢复原名，让模型回到列表
+            if (held.length) {
+              await syncIdentityAccessOnMappingSave({
+                apiBase,
+                alias: row.alias,
+                selectedTargets: [],
+                suspendedTargets: [],
+                abandonedTargets: held,
+                resources: resourcesRef.current,
+              });
+            }
 
             showNotification(
               t('modelsPage.mapping.deleteSuccess', {
