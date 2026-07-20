@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IconChevronDown, IconPlus, IconX } from '@/components/ui/icons';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import type { ModelEntryInput } from '../../types';
 import styles from './sharedForm.module.scss';
 
@@ -12,6 +13,8 @@ interface ModelEntriesEditorProps {
   extendedOptions: boolean;
   mutating: boolean;
   removeDisabled: boolean;
+  /** When true (entry-level disabled), row toggles are locked off. */
+  lockToggles?: boolean;
   onUpdate: (idx: number, patch: Partial<ModelEntryInput>) => void;
   onAdd: () => void;
   onRemove: (idx: number) => void;
@@ -22,6 +25,7 @@ export function ModelEntriesEditor({
   extendedOptions,
   mutating,
   removeDisabled,
+  lockToggles = false,
   onUpdate,
   onAdd,
   onRemove,
@@ -53,6 +57,8 @@ export function ModelEntriesEditor({
       {visible.map((entry, idx) => {
         const expanded = extendedOptions && expandedIdx === idx;
         const hasThinking = (entry.thinkingJson ?? '').trim().length > 0;
+        const enabled = entry.enabled !== false;
+        const toggleLocked = mutating || lockToggles;
         return (
           <div key={idx} className={styles.modelEntry}>
             <div className={styles.modelAliasRow}>
@@ -76,6 +82,15 @@ export function ModelEntriesEditor({
                     {t('providersPage.form.modelBadgeThinking')}
                   </span>
                 ) : null}
+                <ToggleSwitch
+                  checked={enabled && !lockToggles}
+                  disabled={toggleLocked}
+                  ariaLabel={t('providersPage.form.modelEnabledAria', {
+                    defaultValue: 'Enable {{model}}',
+                    model: entry.name || t('providersPage.form.addModel'),
+                  })}
+                  onChange={(value) => onUpdate(idx, { enabled: value })}
+                />
                 {extendedOptions ? (
                   <button
                     type="button"

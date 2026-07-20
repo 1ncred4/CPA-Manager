@@ -114,6 +114,11 @@ export interface ModelEntryInput {
   testModel?: string;
   image?: boolean;
   thinkingJson?: string;
+  /**
+   * Per-model enable state in the provider form (default true).
+   * Saved as excludedModels (most brands) or models[] catalog suspend (openaiCompatibility).
+   */
+  enabled?: boolean;
 }
 
 export interface ApiKeyEntryInput {

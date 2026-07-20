@@ -28,9 +28,10 @@ function MappingTargets({
             ? `${target.displayName} (${target.modelId})`
             : target.modelId;
         const isDimmed = target.suspended || !target.currentlyEnabled;
+        // suspended (channel-pruned) and globally disabled share the same "disabled" look.
         const title = target.suspended
-          ? t('modelsPage.mapping.targetSuspendedHint', {
-              defaultValue: '{{label}}（已挂起：模型禁用时摘除，启用后恢复）',
+          ? t('modelsPage.mapping.targetChannelDisabledHint', {
+              defaultValue: '{{label}}（渠道内已禁用，启用后恢复）',
               label: `${target.providerLabel} · ${label}`,
             })
           : target.currentlyEnabled
@@ -42,9 +43,7 @@ function MappingTargets({
         return (
           <span
             key={key}
-            className={`${styles.tag} ${isDimmed ? styles.tagDisabled : ''} ${
-              target.suspended ? styles.tagSuspended : ''
-            }`}
+            className={`${styles.tag} ${isDimmed ? styles.tagDisabled : ''}`}
             title={title}
           >
             {target.iconSrc ? (
@@ -52,9 +51,9 @@ function MappingTargets({
             ) : null}
             <span className={styles.tagText}>{target.displayName || target.modelId}</span>
             <span className={styles.tagProvider}>{target.providerLabel}</span>
-            {target.suspended ? (
+            {isDimmed ? (
               <span className={styles.tagBadge}>
-                {t('modelsPage.mapping.suspendedBadge', { defaultValue: '挂起' })}
+                {t('modelsPage.mapping.disabledBadge', { defaultValue: '禁用' })}
               </span>
             ) : null}
           </span>

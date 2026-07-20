@@ -10,8 +10,14 @@ import {
 } from '@/components/ui/icons';
 import { Select } from '@/components/ui/Select';
 import { hasDisableAllModelsRule } from '@/components/providers/utils';
+import { useAuthStore } from '@/stores';
 import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import type { ModelInfo } from '@/utils/models';
+import {
+  collectExactExcludedIds,
+  loadSuspendedCatalogSafe,
+  modelsToFormEntriesWithAccess,
+} from '../../formModelAccess';
 import { PROVIDER_DESCRIPTORS } from '../../descriptors';
 import type {
   ApiKeyEntryInput,
@@ -59,61 +65,7 @@ interface BaseProviderFormProps {
 }
 
 const emptyHeader = () => ({ key: '', value: '' });
-const emptyModel = (): ModelEntryInput => ({ name: '' });
-
-/** Dedupe models[] by name for the provider form (aliases live on the Mapping page). */
-const modelsToFormEntries = (
-  models: Array<{
-    name?: string;
-    alias?: string;
-    priority?: number;
-    testModel?: string;
-    image?: boolean;
-    thinking?: Record<string, unknown>;
-  }>,
-  includeOpenAIFields = false
-): ModelEntryInput[] => {
-  const seen = new Set<string>();
-  const out: ModelEntryInput[] = [];
-  models.forEach((m) => {
-    const name = String(m?.name ?? '').trim();
-    if (!name) return;
-    const key = name.toLowerCase();
-    if (seen.has(key)) {
-      // Merge OpenAI flags onto the first occurrence.
-      if (includeOpenAIFields) {
-        const prev = out.find((e) => e.name.trim().toLowerCase() === key);
-        if (prev && m.image === true) prev.image = true;
-        if (prev && !prev.thinkingJson?.trim() && m.thinking) {
-          try {
-            prev.thinkingJson = JSON.stringify(m.thinking, null, 2);
-          } catch {
-            // ignore
-          }
-        }
-      }
-      return;
-    }
-    seen.add(key);
-    const entry: ModelEntryInput = {
-      name,
-      priority: m.priority,
-      testModel: m.testModel,
-    };
-    if (includeOpenAIFields) {
-      entry.image = m.image === true;
-      if (m.thinking && typeof m.thinking === 'object') {
-        try {
-          entry.thinkingJson = JSON.stringify(m.thinking, null, 2);
-        } catch {
-          entry.thinkingJson = '';
-        }
-      }
-    }
-    out.push(entry);
-  });
-  return out.length ? out : [emptyModel()];
-};
+const emptyModel = (): ModelEntryInput => ({ name: '', enabled: true });
 const emptyApiKeyEntry = (): ApiKeyEntryInput => ({
   apiKey: '',
   proxyUrl: '',
@@ -123,7 +75,8 @@ const XAI_API_BASE_URL = 'https://api.x.ai/v1';
 function buildInitialForm(
   brand: ProviderBrand,
   resource: ProviderResource | null,
-  mode: 'create' | 'edit'
+  mode: 'create' | 'edit',
+  apiBase?: string
 ): ProviderEntryFormInput {
   if (mode === 'create' || !resource) {
     return {
@@ -159,6 +112,7 @@ function buildInitialForm(
   const raw = resource.raw;
   if (brand === 'openaiCompatibility') {
     const cfg = raw as OpenAIProviderConfig;
+    const suspendedCatalog = loadSuspendedCatalogSafe(apiBase, resource.id);
     return {
       apiKey: '',
       name: cfg.name ?? '',
@@ -168,7 +122,11 @@ function buildInitialForm(
       disabled: cfg.disabled === true,
       disableCooling: cfg.disableCooling === true,
       priority: cfg.priority,
-      models: cfg.models?.length ? modelsToFormEntries(cfg.models, true) : [emptyModel()],
+      models: modelsToFormEntriesWithAccess({
+        models: cfg.models,
+        includeOpenAIFields: true,
+        suspendedCatalog,
+      }),
       headers: cfg.headers
         ? Object.entries(cfg.headers).map(([k, v]) => ({ key: k, value: String(v) }))
         : [emptyHeader()],
@@ -187,6 +145,7 @@ function buildInitialForm(
 
   const cfg = raw as GeminiKeyConfig & ProviderKeyConfig;
   const disabled = hasDisableAllModelsRule(cfg.excludedModels);
+  const exactExcludedIds = collectExactExcludedIds(cfg.excludedModels);
   return {
     // Keep the API key blank in edit mode. Pre-filling the real key makes this
     // password field a browser-autofill target (the saved management key can
@@ -200,11 +159,14 @@ function buildInitialForm(
     disabled,
     disableCooling: cfg.disableCooling === true,
     priority: cfg.priority,
-    models: cfg.models?.length ? modelsToFormEntries(cfg.models) : [emptyModel()],
+    models: modelsToFormEntriesWithAccess({
+      models: cfg.models,
+      exactExcludedIds,
+    }),
     headers: cfg.headers
       ? Object.entries(cfg.headers).map(([k, v]) => ({ key: k, value: String(v) }))
       : [emptyHeader()],
-    // Per-model exclusions live in Model Management; form never edits them.
+    // Exact excludes are now owned by model-row toggles; wildcards stay server-side.
     excludedModelsText: '',
     websockets:
       brand === 'codex' || brand === 'xai'
@@ -238,13 +200,14 @@ export function BaseProviderForm({
   onDirtyChange,
 }: BaseProviderFormProps) {
   const { t } = useTranslation();
+  const apiBase = useAuthStore((s) => s.apiBase);
   const descriptor = PROVIDER_DESCRIPTORS[brand];
   const fid = useId();
   const [form, setForm] = useState<ProviderEntryFormInput>(() =>
-    buildInitialForm(brand, resource, mode)
+    buildInitialForm(brand, resource, mode, apiBase)
   );
   const [initialFormSignature] = useState<string>(() =>
-    JSON.stringify(buildInitialForm(brand, resource, mode))
+    JSON.stringify(buildInitialForm(brand, resource, mode, apiBase))
   );
   const [error, setError] = useState<string | null>(null);
   const [showSingleApiKey, setShowSingleApiKey] = useState(false);
@@ -378,7 +341,7 @@ export function BaseProviderForm({
         const key = trimmed.toLowerCase();
         if (seen.has(key)) return;
         seen.add(key);
-        next.push({ name: trimmed });
+        next.push({ name: trimmed, enabled: true });
       });
       return { ...prev, models: next };
     });
@@ -806,6 +769,7 @@ export function BaseProviderForm({
               extendedOptions={supportsOpenAIModelOptions}
               mutating={mutating}
               removeDisabled={modelsList.length <= 1}
+              lockToggles={form.disabled}
               onUpdate={updateModelEntry}
               onAdd={() => updateField('models', [...modelsList, emptyModel()])}
               onRemove={removeModelEntry}

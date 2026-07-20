@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconInfo, IconX } from '@/components/ui/icons';
 import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
 import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
@@ -127,34 +128,38 @@ export function ModelAliasEditPage() {
     return map;
   }, [enabledOptions]);
 
+  const resolveTargetRef = useCallback(
+    (key: string): MappingTargetRef | null => {
+      const opt = optionByKey.get(key);
+      if (opt) {
+        return opt.source === 'oauth'
+          ? { source: 'oauth', channel: opt.channel, modelId: opt.modelId }
+          : {
+              source: 'apiKey',
+              resourceId: opt.resourceId,
+              brand: opt.brand,
+              modelId: opt.modelId,
+            };
+      }
+      // 已禁用但仍选中 / 渠道内禁用：用 chip meta / suspended / baseline 补齐
+      const meta = targetChipMeta.get(key);
+      if (meta) return meta.ref;
+      const suspended = suspendedTargets.find((entry) => mappingTargetKey(entry.target) === key);
+      if (suspended) return suspended.target;
+      const baseline = baselineTargets.find((t) => mappingTargetKey(t) === key);
+      return baseline ?? null;
+    },
+    [baselineTargets, optionByKey, suspendedTargets, targetChipMeta]
+  );
+
   const selectedTargets: MappingTargetRef[] = useMemo(() => {
     const result: MappingTargetRef[] = [];
     selectedKeys.forEach((key) => {
-      const opt = optionByKey.get(key);
-      if (opt) {
-        result.push(
-          opt.source === 'oauth'
-            ? { source: 'oauth', channel: opt.channel, modelId: opt.modelId }
-            : {
-                source: 'apiKey',
-                resourceId: opt.resourceId,
-                brand: opt.brand,
-                modelId: opt.modelId,
-              }
-        );
-        return;
-      }
-      // 已禁用但仍选中：优先用 chip meta / baseline 的 ref
-      const meta = targetChipMeta.get(key);
-      if (meta) {
-        result.push(meta.ref);
-        return;
-      }
-      const baseline = baselineTargets.find((t) => mappingTargetKey(t) === key);
-      if (baseline) result.push(baseline);
+      const ref = resolveTargetRef(key);
+      if (ref) result.push(ref);
     });
     return result;
-  }, [baselineTargets, optionByKey, selectedKeys, targetChipMeta]);
+  }, [resolveTargetRef, selectedKeys]);
 
   const suspendedSignature = useMemo(
     () =>
@@ -502,6 +507,12 @@ export function ModelAliasEditPage() {
       else next.delete(key);
       return next;
     });
+    // Selecting from picker clears any channel-local disable for that target.
+    if (checked) {
+      setSuspendedTargets((prev) =>
+        prev.filter((entry) => mappingTargetKey(entry.target) !== key)
+      );
+    }
   };
 
   const removeSelected = (key: string) => {
@@ -510,11 +521,48 @@ export function ModelAliasEditPage() {
       next.delete(key);
       return next;
     });
+    // Permanent remove also drops channel-local disable residue.
+    setSuspendedTargets((prev) =>
+      prev.filter((entry) => mappingTargetKey(entry.target) !== key)
+    );
   };
 
   /** 从编辑页 tag 列表移除一条挂起目标（仅本地状态，保存时再写 localStorage） */
   const removeSuspended = (key: string) => {
     setSuspendedTargets((prev) => prev.filter((entry) => mappingTargetKey(entry.target) !== key));
+  };
+
+  /**
+   * 渠道级启停：只改 selectedKeys / suspendedTargets，不写全局 excluded/catalog。
+   * OFF → 摘到 suspended；ON → 写回 selected。
+   */
+  const setChannelTargetEnabled = (key: string, enabled: boolean) => {
+    const ref = resolveTargetRef(key);
+    if (!ref) return;
+    const aliasLiteral = alias.trim() || baselineAlias;
+    if (!aliasLiteral) return;
+
+    if (!enabled) {
+      setSelectedKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      setSuspendedTargets((prev) => {
+        if (prev.some((entry) => mappingTargetKey(entry.target) === key)) return prev;
+        return [...prev, { alias: aliasLiteral, target: ref }];
+      });
+      return;
+    }
+
+    setSuspendedTargets((prev) =>
+      prev.filter((entry) => mappingTargetKey(entry.target) !== key)
+    );
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
   };
 
   const filteredOptions = useMemo(() => {
@@ -1038,57 +1086,67 @@ export function ModelAliasEditPage() {
             {selectedChips.length > 0 ? (
               <div className={styles.selectedSection}>
                 <div className={styles.tagList}>
-                  {selectedChips.map((chip) => (
-                    <span
-                      key={`${chip.suspended ? 'suspended' : 'active'}:${chip.key}`}
-                      className={`${styles.selectedTag} ${
-                        chip.suspended
-                          ? styles.selectedTagSuspended
-                          : chip.disabled
-                            ? styles.selectedTagDisabled
-                            : ''
-                      }`}
-                      title={
-                        chip.suspended
-                          ? t('modelsPage.mapping.targetSuspendedHint', {
-                              defaultValue: '{{label}}（已挂起：模型禁用时摘除，启用后恢复）',
-                              label: `${chip.providerLabel} · ${chip.label}`,
-                            })
-                          : chip.disabled
-                            ? t('modelsPage.mapping.targetDisabledHint', {
-                                defaultValue: '{{label}}（当前已禁用）',
-                                label: `${chip.providerLabel} · ${chip.label}`,
-                              })
-                            : `${chip.providerLabel} · ${chip.label}`
-                      }
-                    >
-                      {chip.iconSrc ? (
-                        <img src={chip.iconSrc} alt="" className={styles.tagIcon} />
-                      ) : null}
-                      <span className={styles.tagText}>{chip.label}</span>
-                      <span className={styles.tagProvider}>{chip.providerLabel}</span>
-                      {chip.suspended ? (
-                        <span className={styles.tagBadge}>
-                          {t('modelsPage.mapping.suspendedBadge', { defaultValue: '挂起' })}
-                        </span>
-                      ) : chip.disabled ? (
-                        <span className={styles.tagBadge}>
-                          {t('modelsPage.mapping.disabledBadge', { defaultValue: '禁用' })}
-                        </span>
-                      ) : null}
-                      <button
-                        type="button"
-                        className={styles.tagRemove}
-                        onClick={() =>
-                          chip.suspended ? removeSuspended(chip.key) : removeSelected(chip.key)
-                        }
-                        disabled={disableControls || saving}
-                        aria-label={t('common.delete')}
+                  {selectedChips.map((chip) => {
+                    const isDimmed = chip.suspended || chip.disabled;
+                    // Globally disabled (still mapped): keep channel checked but lock toggle.
+                    const globallyDisabled = chip.disabled && !chip.suspended;
+                    const channelEnabled = !chip.suspended;
+                    const title = chip.suspended
+                      ? t('modelsPage.mapping.targetChannelDisabledHint', {
+                          defaultValue: '{{label}}（渠道内已禁用，启用后恢复）',
+                          label: `${chip.providerLabel} · ${chip.label}`,
+                        })
+                      : chip.disabled
+                        ? t('modelsPage.mapping.targetDisabledHint', {
+                            defaultValue: '{{label}}（当前已禁用）',
+                            label: `${chip.providerLabel} · ${chip.label}`,
+                          })
+                        : `${chip.providerLabel} · ${chip.label}`;
+                    return (
+                      <span
+                        key={`${chip.suspended ? 'suspended' : 'active'}:${chip.key}`}
+                        className={`${styles.selectedTag} ${
+                          isDimmed ? styles.selectedTagDisabled : ''
+                        }`}
+                        title={title}
                       >
-                        <IconX size={12} />
-                      </button>
-                    </span>
-                  ))}
+                        {chip.iconSrc ? (
+                          <img src={chip.iconSrc} alt="" className={styles.tagIcon} />
+                        ) : null}
+                        <span className={styles.tagText}>{chip.label}</span>
+                        <span className={styles.tagProvider}>{chip.providerLabel}</span>
+                        {isDimmed ? (
+                          <span className={styles.tagBadge}>
+                            {t('modelsPage.mapping.disabledBadge', { defaultValue: '禁用' })}
+                          </span>
+                        ) : null}
+                        <span className={styles.selectedTagActions}>
+                          <ToggleSwitch
+                            checked={channelEnabled}
+                            disabled={disableControls || saving || globallyDisabled}
+                            ariaLabel={t('modelsPage.mapping.channelToggleAria', {
+                              defaultValue: '渠道内启用 {{model}}',
+                              model: chip.label,
+                            })}
+                            onChange={(value) => setChannelTargetEnabled(chip.key, value)}
+                          />
+                          <button
+                            type="button"
+                            className={styles.tagRemove}
+                            onClick={() =>
+                              chip.suspended
+                                ? removeSuspended(chip.key)
+                                : removeSelected(chip.key)
+                            }
+                            disabled={disableControls || saving}
+                            aria-label={t('common.delete')}
+                          >
+                            <IconX size={12} />
+                          </button>
+                        </span>
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             ) : null}
