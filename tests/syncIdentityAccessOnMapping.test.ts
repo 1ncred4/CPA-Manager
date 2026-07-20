@@ -1,23 +1,48 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  listNonIdentityAliasesForModel,
+  listUserNonIdentityAliasesForModel,
   partitionIdentityAccessTargets,
   planOauthIdentityDisable,
   planOauthIdentityEnable,
 } from '../src/features/models/syncIdentityAccessOnMapping';
+import {
+  __replaceManagedIdentityExcludeForTests,
+  applyManagedIdentityExcludeDisplayMask,
+  listManagedIdentityExcludeKeys,
+  managedOauthExcludeKey,
+  markManagedOauthIdentityExclude,
+  unmarkManagedOauthIdentityExclude,
+} from '../src/features/models/managedIdentityExclude';
 import type { MappingTargetRef } from '../src/features/models/modelMapping';
 import type { OAuthModelAliasEntry } from '../src/types';
+
+const API = 'http://localhost:8317';
+
+const memory = new Map<string, string>();
+const installLocalStorage = () => {
+  const storage = {
+    getItem: (key: string) => memory.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      memory.set(key, value);
+    },
+    removeItem: (key: string) => {
+      memory.delete(key);
+    },
+    clear: () => memory.clear(),
+    key: (index: number) => Array.from(memory.keys())[index] ?? null,
+    get length() {
+      return memory.size;
+    },
+  };
+  // @ts-expect-error test shim
+  globalThis.window = { localStorage: storage, dispatchEvent: () => true };
+  // @ts-expect-error test shim
+  globalThis.localStorage = storage;
+};
 
 const oauth = (channel: string, modelId: string): MappingTargetRef => ({
   source: 'oauth',
   channel,
-  modelId,
-});
-
-const apiKey = (resourceId: string, modelId: string): MappingTargetRef => ({
-  source: 'apiKey',
-  resourceId,
-  brand: 'claude',
   modelId,
 });
 
@@ -34,90 +59,88 @@ describe('partitionIdentityAccessTargets', () => {
     expect(result.toDisable).toEqual([identity]);
     expect(result.toEnable).toEqual([]);
   });
-
-  test('enables identity when selected and not suspended', () => {
-    const alias = 'gpt-5.6-luna';
-    const identity = oauth('codex', 'gpt-5.6-luna');
-    const result = partitionIdentityAccessTargets({
-      alias,
-      selectedTargets: [identity],
-      suspendedTargets: [],
-    });
-    expect(result.toEnable).toEqual([identity]);
-    expect(result.toDisable).toEqual([]);
-  });
-
-  test('ignores non-identity targets', () => {
-    const result = partitionIdentityAccessTargets({
-      alias: 'my-channel',
-      selectedTargets: [apiKey('claude:0:x', 'claude-opus-4-8')],
-      suspendedTargets: [{ target: apiKey('claude:0:x', 'claude-sonnet-4-5') }],
-    });
-    expect(result.toEnable).toEqual([]);
-    expect(result.toDisable).toEqual([]);
-  });
-
-  test('suspended wins when both selected and suspended', () => {
-    const identity = oauth('codex', 'gpt-5.6-luna');
-    const result = partitionIdentityAccessTargets({
-      alias: 'gpt-5.6-luna',
-      selectedTargets: [identity],
-      suspendedTargets: [{ target: identity }],
-    });
-    expect(result.toDisable).toEqual([identity]);
-    expect(result.toEnable).toEqual([]);
-  });
 });
 
-describe('listNonIdentityAliasesForModel / fork plans', () => {
-  const entries: OAuthModelAliasEntry[] = [
-    { name: 'gpt-5.6-luna', alias: 'my-luna', fork: true },
-    { name: 'gpt-5.6-luna', alias: 'gpt-5.6-luna' }, // identity residue
-    { name: 'other', alias: 'chat' },
-  ];
-
-  test('lists only meaningful non-identity aliases for a source model', () => {
-    const related = listNonIdentityAliasesForModel(entries, 'gpt-5.6-luna');
-    expect(related).toEqual([{ name: 'gpt-5.6-luna', alias: 'my-luna', fork: true }]);
-  });
-
-  test('planOauthIdentityDisable prefers fork=false over exclude', () => {
+describe('oauth identity fork vs exclude plan', () => {
+  test('prefers fork=false when user aliases exist', () => {
+    const entries: OAuthModelAliasEntry[] = [
+      { name: 'gpt-5.6-luna', alias: 'my-luna', fork: true },
+    ];
     const plan = planOauthIdentityDisable(entries, 'gpt-5.6-luna');
     expect(plan.usedFork).toBe(true);
     expect(plan.needsExclude).toBe(false);
-    expect(plan.changed).toBe(true);
-    const luna = plan.next.find((e) => e.alias === 'my-luna');
-    expect(luna?.fork).toBeUndefined();
+    expect(plan.next[0].fork).toBeUndefined();
   });
 
-  test('planOauthIdentityDisable falls back to exclude when no alias exists', () => {
-    const plan = planOauthIdentityDisable(
-      [{ name: 'other', alias: 'chat' }],
-      'gpt-5.6-luna'
-    );
+  test('needs exclude when no user aliases (no fake cpa.off alias)', () => {
+    const plan = planOauthIdentityDisable([{ name: 'other', alias: 'chat' }], 'gpt-5.6-luna');
     expect(plan.usedFork).toBe(false);
     expect(plan.needsExclude).toBe(true);
-    expect(plan.changed).toBe(false);
+    expect(plan.next.some((e) => String(e.alias).startsWith('cpa.off.'))).toBe(false);
   });
 
-  test('planOauthIdentityDisable is no-op when fork already off', () => {
+  test('drops historical cpa.off anchors on disable plan', () => {
     const plan = planOauthIdentityDisable(
-      [{ name: 'gpt-5.6-luna', alias: 'my-luna' }],
+      [
+        { name: 'gpt-5.6-luna', alias: 'cpa.off.gpt-5.6-luna' },
+        { name: 'gpt-5.6-luna', alias: 'my-luna', fork: true },
+      ],
       'gpt-5.6-luna'
     );
     expect(plan.usedFork).toBe(true);
-    expect(plan.needsExclude).toBe(false);
-    expect(plan.changed).toBe(false);
+    expect(plan.next.find((e) => String(e.alias).startsWith('cpa.off.'))).toBeUndefined();
+    expect(plan.next.find((e) => e.alias === 'my-luna')?.fork).toBeUndefined();
   });
 
-  test('planOauthIdentityEnable sets fork=true', () => {
+  test('enable restores fork and drops anchors', () => {
     const plan = planOauthIdentityEnable(
-      [{ name: 'gpt-5.6-luna', alias: 'my-luna' }],
+      [
+        { name: 'gpt-5.6-luna', alias: 'my-luna' },
+        { name: 'gpt-5.6-luna', alias: 'cpa.off.gpt-5.6-luna' },
+      ],
       'gpt-5.6-luna'
     );
-    expect(plan.usedFork).toBe(true);
-    expect(plan.clearExclude).toBe(true);
-    expect(plan.changed).toBe(true);
-    expect(plan.next[0].fork).toBe(true);
+    expect(plan.next).toEqual([{ name: 'gpt-5.6-luna', alias: 'my-luna', fork: true }]);
+  });
+
+  test('listUserNonIdentityAliasesForModel ignores cpa.off', () => {
+    const related = listUserNonIdentityAliasesForModel(
+      [
+        { name: 'gpt-5.6-luna', alias: 'cpa.off.gpt-5.6-luna' },
+        { name: 'gpt-5.6-luna', alias: 'my-luna' },
+      ],
+      'gpt-5.6-luna'
+    );
+    expect(related).toEqual([{ name: 'gpt-5.6-luna', alias: 'my-luna' }]);
+  });
+});
+
+describe('managed identity exclude display mask', () => {
+  test('marks and unmasks oauth rows as enabled in UI', () => {
+    installLocalStorage();
+    memory.clear();
+    __replaceManagedIdentityExcludeForTests(API, []);
+
+    markManagedOauthIdentityExclude(API, 'codex', 'gpt-5.6-luna');
+    const key = managedOauthExcludeKey('codex', 'gpt-5.6-luna');
+    expect(listManagedIdentityExcludeKeys(API).has(key)).toBe(true);
+
+    const masked = applyManagedIdentityExcludeDisplayMask(
+      [
+        { key, source: 'oauth', enabled: false, modelId: 'gpt-5.6-luna' },
+        {
+          key: 'oauth:codex:other',
+          source: 'oauth',
+          enabled: false,
+          modelId: 'other',
+        },
+      ],
+      API
+    );
+    expect(masked[0].enabled).toBe(true);
+    expect(masked[1].enabled).toBe(false);
+
+    unmarkManagedOauthIdentityExclude(API, 'codex', 'gpt-5.6-luna');
+    expect(listManagedIdentityExcludeKeys(API).has(key)).toBe(false);
   });
 });

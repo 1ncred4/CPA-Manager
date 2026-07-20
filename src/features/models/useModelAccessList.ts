@@ -46,6 +46,11 @@ import {
 } from './catalogSuspend';
 import { targetRefFromAccessRow } from './mappingSuspend';
 import {
+  applyManagedIdentityExcludeDisplayMask,
+  clearManagedIdentityExcludeIfPresent,
+  MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT,
+} from './managedIdentityExclude';
+import {
   pruneMappingsForDisabledTarget,
   restoreMappingsForEnabledTarget,
   type MappingSyncResult,
@@ -111,6 +116,7 @@ export function useModelAccessList(): UseModelAccessListResult {
    * 与 localStorage 真源合并后用于行构建。
    */
   const [catalogSuspendTick, setCatalogSuspendTick] = useState(0);
+  const [managedExcludeTick, setManagedExcludeTick] = useState(0);
   const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set());
 
   const loadRequestRef = useRef(0);
@@ -190,6 +196,18 @@ export function useModelAccessList(): UseModelAccessListResult {
     };
     window.addEventListener(SUSPENDED_CATALOG_CHANGED_EVENT, onChange);
     return () => window.removeEventListener(SUSPENDED_CATALOG_CHANGED_EVENT, onChange);
+  }, [apiBase]);
+
+  // 受管 identity 排除标记变化时刷新显示掩码
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ apiBase?: string }>).detail;
+      if (detail?.apiBase && detail.apiBase !== apiBase) return;
+      setManagedExcludeTick((n) => n + 1);
+    };
+    window.addEventListener(MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT, onChange);
   }, [apiBase]);
 
   const suspendedCatalogByResource = useMemo(() => {
@@ -332,11 +350,14 @@ export function useModelAccessList(): UseModelAccessListResult {
       );
     });
 
-    return sortModelAccessRows(built);
+    void managedExcludeTick;
+    return applyManagedIdentityExcludeDisplayMask(sortModelAccessRows(built), apiBase);
   }, [
     allApiKeyResources,
+    apiBase,
     apiKeyExcludedOverrides,
     excluded,
+    managedExcludeTick,
     oauthExcludedError,
     oauthModels,
     resolvedTheme,
@@ -442,6 +463,8 @@ export function useModelAccessList(): UseModelAccessListResult {
 
       if (row.source === 'oauth' && row.oauthChannel) {
         const channel = row.oauthChannel;
+        // 用户主动开关：去掉「受管排除」显示掩码，按真实 excluded 呈现
+        clearManagedIdentityExcludeIfPresent(apiBase, row.key);
         const snapshotBefore = normalizeOAuthExcludedRules(excludedRef.current[channel] ?? []);
         const optimistic = updateOAuthExcludedRule(snapshotBefore, row.modelId, wantExclude);
         setExcluded((prev) => ({ ...prev, [channel]: optimistic }));

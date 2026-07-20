@@ -8,6 +8,7 @@ import type { ProviderBrand, ProviderResource } from '@/features/providers/types
 import type { AuthFileModelItem } from '@/features/authFiles/constants';
 import { normalizeProviderKey } from '@/features/authFiles/constants';
 import type { ModelAccessRow } from './modelAccessRows';
+import { isManagedNativeOffAlias } from './managedNativeOffAlias';
 
 export type MappingTargetSource = 'oauth' | 'apiKey';
 
@@ -177,6 +178,8 @@ export function buildFederatedMappingRows(
       const modelId = String(entry?.name ?? '').trim();
       const alias = String(entry?.alias ?? '').trim();
       if (!modelId || !alias) return;
+      // 历史 cpa.off 锚点（若仍残留）不进入映射列表
+      if (isManagedNativeOffAlias(alias)) return;
 
       const ref: OauthMappingTargetRef = { source: 'oauth', channel, modelId };
       const tKey = mappingTargetKey(ref);

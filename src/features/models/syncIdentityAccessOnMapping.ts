@@ -1,13 +1,13 @@
 /**
- * 同名 identity 目标（alias === modelId）无法靠剪枝 alias 摘掉：
- * 客户端按模型原名就会命中原生路由。
+ * 同名 identity 目标（alias === modelId）无法靠剪枝 alias 摘掉。
  *
- * OAuth 优先用 fork=false「关闭原名入口」，模型仍可通过其它 alias 使用，
- * 其它手动渠道也能继续映射该模型。
- * 仅当该源模型没有任何非同名 alias 映射时，才回退到 excluded-models
- * （此时会全局不可用——是 identity 无 fork 可挂时的最后手段）。
+ * OAuth：
+ * 1. 已有用户非同名 alias → fork=false 关原名（不 excluded，不污染列表）
+ * 2. 没有任何用户别名 → oauth-excluded 关路由 + localStorage 受管标记
+ *    管理端显示仍为「启用」，其它渠道 picker 仍可见可选
+ * 3. 启用时：fork=true / 清 exclude / 清受管标记
  *
- * API Key 无 fork 字段：仍用 excludedModels / OpenAI catalog suspend。
+ * API Key 无 fork：excludedModels / OpenAI catalog（显示层暂不伪装）。
  */
 
 import { stripDisableAllModelsRule } from '@/components/providers/utils';
@@ -26,11 +26,16 @@ import {
   takeSuspendedCatalog,
 } from './catalogSuspend';
 import {
+  markManagedOauthIdentityExclude,
+  unmarkManagedOauthIdentityExclude,
+} from './managedIdentityExclude';
+import {
   isIdentityMappingTarget,
   isMeaningfulAlias,
   mappingTargetKey,
   type MappingTargetRef,
 } from './modelMapping';
+import { isManagedNativeOffAlias } from './managedNativeOffAlias';
 import { toggleApiKeyExcludedList } from './modelAccessRows';
 import { updateApiKeyExcludedModels } from './updateApiKeyExcludedModels';
 import { updateApiKeyModels } from './updateApiKeyModels';
@@ -38,11 +43,9 @@ import { updateApiKeyModels } from './updateApiKeyModels';
 const lower = (value: string): string => value.trim().toLowerCase();
 
 export type IdentityAccessSyncResult = {
-  /** OAuth: 通过 fork=false 关闭了原名 */
   forked: number;
-  /** 回退到 excluded / catalog 的数量（全局不可用） */
+  /** OAuth 无别名时 excluded，或 API Key 路径 */
   excluded: number;
-  /** 重新开放原名 / 去掉排除 */
   included: number;
   failed: string[];
 };
@@ -75,8 +78,8 @@ export function partitionIdentityAccessTargets(input: {
   return { toEnable, toDisable };
 }
 
-/** 源模型上的非同名 alias 条目（fork 可作用的对象） */
-export function listNonIdentityAliasesForModel(
+/** 用户侧非同名 alias（排除历史 cpa.off 锚点） */
+export function listUserNonIdentityAliasesForModel(
   entries: OAuthModelAliasEntry[],
   modelId: string
 ): OAuthModelAliasEntry[] {
@@ -86,14 +89,20 @@ export function listNonIdentityAliasesForModel(
     const name = String(entry.name ?? '').trim();
     const alias = String(entry.alias ?? '').trim();
     if (!name || lower(name) !== modelKey) return false;
-    return isMeaningfulAlias(alias, name);
+    if (!isMeaningfulAlias(alias, name)) return false;
+    if (isManagedNativeOffAlias(alias)) return false;
+    return true;
   });
 }
 
-/**
- * 禁用原名：有非同名 alias → 全部 fork=false；否则标记需要 excluded。
- * 纯函数，便于测试。
- */
+/** @deprecated 兼容测试旧名 */
+export function listNonIdentityAliasesForModel(
+  entries: OAuthModelAliasEntry[],
+  modelId: string
+): OAuthModelAliasEntry[] {
+  return listUserNonIdentityAliasesForModel(entries, modelId);
+}
+
 export function planOauthIdentityDisable(
   entries: OAuthModelAliasEntry[],
   modelId: string
@@ -103,16 +112,31 @@ export function planOauthIdentityDisable(
   needsExclude: boolean;
   changed: boolean;
 } {
-  const related = listNonIdentityAliasesForModel(entries, modelId);
+  const related = listUserNonIdentityAliasesForModel(entries, modelId);
+  // 顺带丢掉历史 cpa.off 锚点，避免污染
+  let next = entries.filter(
+    (entry) =>
+      !(
+        lower(String(entry.name ?? '')) === lower(modelId) &&
+        isManagedNativeOffAlias(String(entry.alias ?? ''))
+      )
+  );
+  const droppedAnchor = next.length !== entries.length;
+
   if (!related.length) {
-    return { next: entries, usedFork: false, needsExclude: true, changed: false };
+    return {
+      next,
+      usedFork: false,
+      needsExclude: true,
+      changed: droppedAnchor,
+    };
   }
 
-  let changed = false;
+  let changed = droppedAnchor;
   const relatedKeys = new Set(
     related.map((e) => `${lower(String(e.name))}|${lower(String(e.alias))}`)
   );
-  const next = entries.map((entry) => {
+  next = next.map((entry) => {
     const key = `${lower(String(entry.name))}|${lower(String(entry.alias))}`;
     if (!relatedKeys.has(key)) return entry;
     if (entry.fork === true) {
@@ -121,7 +145,6 @@ export function planOauthIdentityDisable(
       delete cloned.fork;
       return cloned;
     }
-    // already fork off
     return entry;
   });
 
@@ -129,14 +152,10 @@ export function planOauthIdentityDisable(
     next,
     usedFork: true,
     needsExclude: false,
-    // even if already fork-off, we "used fork" successfully (no exclude needed)
     changed,
   };
 }
 
-/**
- * 启用原名：有非同名 alias → fork=true；并说明应去掉 excluded。
- */
 export function planOauthIdentityEnable(
   entries: OAuthModelAliasEntry[],
   modelId: string
@@ -146,26 +165,38 @@ export function planOauthIdentityEnable(
   clearExclude: boolean;
   changed: boolean;
 } {
-  const related = listNonIdentityAliasesForModel(entries, modelId);
-  let changed = false;
-  if (!related.length) {
+  const modelKey = lower(modelId);
+  if (!modelKey) {
     return { next: entries, usedFork: false, clearExclude: true, changed: false };
   }
 
-  const relatedKeys = new Set(
-    related.map((e) => `${lower(String(e.name))}|${lower(String(e.alias))}`)
-  );
-  const next = entries.map((entry) => {
-    const key = `${lower(String(entry.name))}|${lower(String(entry.alias))}`;
-    if (!relatedKeys.has(key)) return entry;
-    if (entry.fork !== true) {
+  let changed = false;
+  let usedFork = false;
+  const next: OAuthModelAliasEntry[] = [];
+
+  entries.forEach((entry) => {
+    const name = String(entry.name ?? '').trim();
+    const alias = String(entry.alias ?? '').trim();
+    if (!name) return;
+
+    // 清理历史受管锚点
+    if (lower(name) === modelKey && isManagedNativeOffAlias(alias)) {
       changed = true;
-      return { ...entry, fork: true };
+      return;
     }
-    return entry;
+
+    if (lower(name) === modelKey && isMeaningfulAlias(alias, name)) {
+      usedFork = true;
+      if (entry.fork !== true) {
+        changed = true;
+        next.push({ ...entry, fork: true });
+        return;
+      }
+    }
+    next.push(entry);
   });
 
-  return { next, usedFork: true, clearExclude: true, changed };
+  return { next, usedFork, clearExclude: true, changed };
 }
 
 async function loadOauthExcludedSafe(): Promise<{
@@ -202,10 +233,6 @@ async function loadOauthAliasSafe(): Promise<{
   }
 }
 
-/**
- * 同步同名 identity 目标的「原名可达性」。
- * OAuth: fork 优先；API Key: excluded/catalog。
- */
 export async function syncIdentityAccessOnMappingSave(input: {
   apiBase: string;
   alias: string;
@@ -226,7 +253,6 @@ export async function syncIdentityAccessOnMappingSave(input: {
   });
   if (!toEnable.length && !toDisable.length) return result;
 
-  // --- OAuth: fork first, exclude only as fallback ---
   const oauthDisableByChannel = new Map<string, string[]>();
   const oauthEnableByChannel = new Map<string, string[]>();
   toDisable.forEach((target) => {
@@ -268,17 +294,17 @@ export async function syncIdentityAccessOnMappingSave(input: {
           let entries = [...(workingAlias[channel] ?? [])];
           let rules = normalizeOAuthExcludedRules(workingExcluded[channel] ?? []);
 
-          // Disable identity originals
           for (const modelId of oauthDisableByChannel.get(channel) ?? []) {
             if (!aliasUnsupported) {
               const plan = planOauthIdentityDisable(entries, modelId);
+              if (plan.changed) {
+                entries = plan.next;
+                aliasDirty.add(channel);
+              }
               if (plan.usedFork) {
-                if (plan.changed) {
-                  entries = plan.next;
-                  aliasDirty.add(channel);
-                }
                 result.forked += 1;
-                // 若此前被 excluded，改用 fork 后应清掉精确排除，避免模型完全不可映射
+                // fork 路径：确保不残留 excluded + 清受管标记
+                unmarkManagedOauthIdentityExclude(input.apiBase, channel, modelId);
                 if (!excludedUnsupported) {
                   const before = rules.length;
                   rules = updateOAuthExcludedRule(rules, modelId, false);
@@ -288,17 +314,17 @@ export async function syncIdentityAccessOnMappingSave(input: {
               }
             }
 
-            // Fallback: excluded (global — last resort when no non-identity alias exists)
+            // 无用户别名：excluded 关路由 + 受管标记（UI 仍显示启用）
             if (excludedUnsupported) {
               result.failed.push(`oauth-no-fork-or-exclude:${channel}:${modelId}`);
               continue;
             }
             rules = updateOAuthExcludedRule(rules, modelId, true);
             excludedDirty.add(channel);
+            markManagedOauthIdentityExclude(input.apiBase, channel, modelId);
             result.excluded += 1;
           }
 
-          // Enable identity originals: fork=true + clear exact exclude
           for (const modelId of oauthEnableByChannel.get(channel) ?? []) {
             let handled = false;
             if (!aliasUnsupported) {
@@ -307,7 +333,7 @@ export async function syncIdentityAccessOnMappingSave(input: {
                 entries = plan.next;
                 aliasDirty.add(channel);
               }
-              if (plan.usedFork) handled = true;
+              if (plan.usedFork || plan.changed) handled = true;
             }
             if (!excludedUnsupported) {
               const before = rules.length;
@@ -317,6 +343,7 @@ export async function syncIdentityAccessOnMappingSave(input: {
                 handled = true;
               }
             }
+            unmarkManagedOauthIdentityExclude(input.apiBase, channel, modelId);
             if (handled) result.included += 1;
           }
 
@@ -324,17 +351,17 @@ export async function syncIdentityAccessOnMappingSave(input: {
           workingExcluded[channel] = rules;
         }
 
-        // Persist alias map
-        for (const channel of aliasDirty) {
-          const entries = workingAlias[channel] ?? [];
-          if (entries.length) {
-            await authFilesApi.saveOauthModelAlias(channel, entries);
-          } else {
-            await authFilesApi.deleteOauthModelAlias(channel);
+        if (!aliasUnsupported) {
+          for (const channel of aliasDirty) {
+            const entries = workingAlias[channel] ?? [];
+            if (entries.length) {
+              await authFilesApi.saveOauthModelAlias(channel, entries);
+            } else {
+              await authFilesApi.deleteOauthModelAlias(channel);
+            }
           }
         }
 
-        // Persist excluded map
         if (!excludedUnsupported) {
           for (const channel of excludedDirty) {
             const rules = normalizeOAuthExcludedRules(workingExcluded[channel] ?? []);
@@ -351,7 +378,7 @@ export async function syncIdentityAccessOnMappingSave(input: {
     }
   }
 
-  // --- API Key: no fork — excluded / catalog only ---
+  // --- API Key ---
   const apiDisableByResource = new Map<string, string[]>();
   const apiEnableByResource = new Map<string, string[]>();
   toDisable.forEach((target) => {

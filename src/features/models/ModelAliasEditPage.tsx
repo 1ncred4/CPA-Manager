@@ -67,6 +67,7 @@ import {
   type MappingValidationError,
 } from './modelMapping';
 import { updateApiKeyModels } from './updateApiKeyModels';
+import { applyManagedIdentityExcludeDisplayMask } from './managedIdentityExclude';
 import { syncIdentityAccessOnMappingSave } from './syncIdentityAccessOnMapping';
 import styles from './ModelAliasEdit.module.scss';
 
@@ -288,9 +289,9 @@ export function ModelAliasEditPage() {
         workbenchRef.current.snapshot?.groups.flatMap((g) => g.resources) ?? [];
       setResources(nextResources);
 
-      const accessRows: ModelAccessRow[] = [];
+      const accessRowsRaw: ModelAccessRow[] = [];
       Object.entries(oauthModels).forEach(([channel, models]) => {
-        accessRows.push(
+        accessRowsRaw.push(
           ...buildOAuthAccessRows({
             channel,
             models,
@@ -309,8 +310,10 @@ export function ModelAliasEditPage() {
         });
         const entryLabel = resource.name ?? resource.identifier;
         const providerLabel = entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
-        accessRows.push(...buildApiKeyAccessRows({ resource, providerLabel, iconSrc }));
+        accessRowsRaw.push(...buildApiKeyAccessRows({ resource, providerLabel, iconSrc }));
       });
+      // 受管 identity 排除：UI 仍显示启用，其它渠道可选
+      const accessRows = applyManagedIdentityExcludeDisplayMask(accessRowsRaw, apiBase);
 
       const options = buildEnabledMappingOptions(accessRows);
       setEnabledOptions(options);
@@ -769,7 +772,7 @@ export function ModelAliasEditPage() {
           }),
           'warning'
         );
-      } else if (sync.forked > 0 && sync.excluded === 0) {
+      } else if (sync.forked > 0) {
         showNotification(
           t('modelsPage.mapping.identityAccessForked', {
             defaultValue:
@@ -782,10 +785,10 @@ export function ModelAliasEditPage() {
         showNotification(
           t('modelsPage.mapping.identityAccessExcluded', {
             defaultValue:
-              '已全局禁用 {{count}} 个同名目标（无其它别名可挂 fork；其它渠道也无法再选该模型）',
+              '已关闭 {{count}} 个同名目标的原名路由；管理端仍显示启用，其它渠道可继续映射',
             count: sync.excluded,
           }),
-          'warning'
+          'success'
         );
       }
       return sync;
@@ -1157,7 +1160,7 @@ export function ModelAliasEditPage() {
                       ? isIdentity
                         ? t('modelsPage.mapping.targetIdentityChannelDisabledHint', {
                             defaultValue:
-                              '{{label}}（同名目标：保存后优先关闭原名入口 fork；若无其它别名才全局禁用）',
+                              '{{label}}（同名目标：保存后关闭原名入口，模型仍可被其它渠道映射）',
                             label: `${chip.providerLabel} · ${chip.label}`,
                           })
                         : t('modelsPage.mapping.targetChannelDisabledHint', {

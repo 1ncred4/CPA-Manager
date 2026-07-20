@@ -35,6 +35,10 @@ import {
   SUSPENDED_MAPPINGS_CHANGED_EVENT,
 } from './mappingSuspend';
 import {
+  applyManagedIdentityExcludeDisplayMask,
+  MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT,
+} from './managedIdentityExclude';
+import {
   applyApiKeyModelAliasChanges,
   applyOauthAliasTargetChanges,
   assembleManualAndAutoMappingRows,
@@ -253,13 +257,24 @@ export function useModelMappingList(): UseModelMappingListResult {
       if (!event.key) return;
       if (event.key.includes('suspended-model-mappings')) setSuspendedEpoch((n) => n + 1);
       if (event.key.includes('manual-mapping-claims')) setClaimsEpoch((n) => n + 1);
+      if (event.key.includes('managed-identity-exclude')) {
+        // 触发 access 行重建（依赖 excluded/oauth 重算后的 mask）
+        setAccessRows((prev) => applyManagedIdentityExcludeDisplayMask(prev, apiBase));
+      }
+    };
+    const onManagedExclude = (event: Event) => {
+      const detail = (event as CustomEvent<{ apiBase?: string }>).detail;
+      if (detail?.apiBase && detail.apiBase !== apiBase) return;
+      setAccessRows((prev) => applyManagedIdentityExcludeDisplayMask(prev, apiBase));
     };
     window.addEventListener(SUSPENDED_MAPPINGS_CHANGED_EVENT, onSuspendedChanged);
     window.addEventListener(MANUAL_MAPPING_CLAIMS_CHANGED_EVENT, onClaimsChanged);
+    window.addEventListener(MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT, onManagedExclude);
     window.addEventListener('storage', onStorage);
     return () => {
       window.removeEventListener(SUSPENDED_MAPPINGS_CHANGED_EVENT, onSuspendedChanged);
       window.removeEventListener(MANUAL_MAPPING_CLAIMS_CHANGED_EVENT, onClaimsChanged);
+      window.removeEventListener(MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT, onManagedExclude);
       window.removeEventListener('storage', onStorage);
     };
   }, [apiBase]);
@@ -291,8 +306,8 @@ export function useModelMappingList(): UseModelMappingListResult {
       const providerLabel = entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
       built.push(...buildApiKeyAccessRows({ resource, providerLabel, iconSrc }));
     });
-    setAccessRows(built);
-  }, [allApiKeyResources, excluded, loading, oauthModels, resolvedTheme, t]);
+    setAccessRows(applyManagedIdentityExcludeDisplayMask(built, apiBase));
+  }, [allApiKeyResources, apiBase, excluded, loading, oauthModels, resolvedTheme, t]);
 
   const enabledKeySet = useMemo(() => {
     const set = new Set<string>();
