@@ -507,6 +507,62 @@ describe('modelMapping', () => {
     expect(flat.every((r) => r.kind === 'auto' || r.kind === 'manual')).toBe(true);
   });
 
+  test('channel-disabled (suspended) manual target still claims modelId out of auto', () => {
+    // 手动 custom.chat → gpt-x 渠道内禁用（suspended 灰标）后，gpt-x 不得回流自动映射
+    const accessRows: ModelAccessRow[] = [
+      {
+        key: 'oauth:codex:gpt-x',
+        source: 'oauth',
+        modelId: 'gpt-x',
+        displayName: 'gpt-x',
+        providerLabel: 'Codex',
+        channelOrBrand: 'codex',
+        enabled: true,
+        supportsExclude: true,
+        toggleDisabled: false,
+        lockReason: null,
+        oauthChannel: 'codex',
+      },
+      {
+        key: 'oauth:claude:claude-a',
+        source: 'oauth',
+        modelId: 'claude-a',
+        displayName: 'claude-a',
+        providerLabel: 'Claude',
+        channelOrBrand: 'claude',
+        enabled: true,
+        supportsExclude: true,
+        toggleDisabled: false,
+        lockReason: null,
+        oauthChannel: 'claude',
+      },
+    ];
+
+    const manualWithSuspended = [
+      {
+        alias: 'custom.chat',
+        aliasKey: 'custom.chat',
+        targets: [
+          {
+            source: 'oauth' as const,
+            channel: 'codex',
+            modelId: 'gpt-x',
+            displayName: 'gpt-x',
+            providerLabel: 'Codex',
+            currentlyEnabled: false,
+            suspended: true,
+          },
+        ],
+        kind: 'manual' as const,
+        hasConfiguredTargets: true,
+      },
+    ];
+
+    const { autoRows } = assembleManualAndAutoMappingRows(manualWithSuspended, accessRows);
+    expect(autoRows.map((r) => r.aliasKey)).toEqual(['claude-a']);
+    expect(autoRows.some((r) => r.aliasKey === 'gpt-x')).toBe(false);
+  });
+
   test('applyOauthAliasTargetChanges preserves other aliases and forceMapping', () => {
     const entries: OAuthModelAliasEntry[] = [
       { name: 'keep-me', alias: 'other', fork: true },

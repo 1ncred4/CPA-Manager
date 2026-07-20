@@ -68,7 +68,9 @@ import {
 } from './modelMapping';
 import { updateApiKeyModels } from './updateApiKeyModels';
 import { applyManagedIdentityExcludeDisplayMask } from './managedIdentityExclude';
+import { applyExposureNativeHideDisplayMask } from './exposureNativeHide';
 import { syncIdentityAccessOnMappingSave } from './syncIdentityAccessOnMapping';
+import { runExposureReconcile } from './runExposureReconcile';
 import styles from './ModelAliasEdit.module.scss';
 
 type LocationState = { fromModels?: boolean } | null;
@@ -313,7 +315,10 @@ export function ModelAliasEditPage() {
         accessRowsRaw.push(...buildApiKeyAccessRows({ resource, providerLabel, iconSrc }));
       });
       // 受管 identity 排除：UI 仍显示启用，其它渠道可选
-      const accessRows = applyManagedIdentityExcludeDisplayMask(accessRowsRaw, apiBase);
+      const accessRows = applyExposureNativeHideDisplayMask(
+        applyManagedIdentityExcludeDisplayMask(accessRowsRaw, apiBase),
+        apiBase
+      );
 
       const options = buildEnabledMappingOptions(accessRows);
       setEnabledOptions(options);
@@ -815,6 +820,96 @@ export function ModelAliasEditPage() {
       return sync;
     };
 
+    /** 跨名认领：投影后 hide 原名，使 /v1/models 不回流原名（含渠道内禁用边） */
+    const applyExposureReconcile = async () => {
+      try {
+        // 重新拉 alias 以包含刚写入的配置；access 用当前 resources 粗算 enabled=true 边
+        const latestAlias = await authFilesApi.getOauthModelAlias().catch(() => modelAlias);
+        const accessRowsRough: ModelAccessRow[] = [];
+        resources.forEach((resource) => {
+          const brandLabel = t(`providersPage.providerNames.${resource.brand}`, {
+            defaultValue: resource.brand,
+          });
+          const entryLabel = resource.name ?? resource.identifier;
+          const providerLabel = entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
+          accessRowsRough.push(
+            ...buildApiKeyAccessRows({ resource, providerLabel, iconSrc: null })
+          );
+        });
+        // OAuth access：编辑页不重拉 definitions 时，用 target chip 推断 enabled
+        selectedTargets.forEach((ref) => {
+          if (ref.source !== 'oauth') return;
+          accessRowsRough.push({
+            key: `oauth:${ref.channel}:${ref.modelId.trim().toLowerCase()}`,
+            source: 'oauth',
+            modelId: ref.modelId,
+            displayName: ref.modelId,
+            providerLabel: getTypeLabel(t, ref.channel),
+            channelOrBrand: ref.channel,
+            enabled: true,
+            supportsExclude: true,
+            toggleDisabled: false,
+            lockReason: null,
+            oauthChannel: ref.channel,
+          });
+        });
+        suspendedTargets.forEach((entry) => {
+          const ref = entry.target;
+          if (ref.source !== 'oauth') return;
+          accessRowsRough.push({
+            key: `oauth:${ref.channel}:${ref.modelId.trim().toLowerCase()}`,
+            source: 'oauth',
+            modelId: ref.modelId,
+            displayName: ref.modelId,
+            providerLabel: getTypeLabel(t, ref.channel),
+            channelOrBrand: ref.channel,
+            enabled: true,
+            supportsExclude: true,
+            toggleDisabled: false,
+            lockReason: null,
+            oauthChannel: ref.channel,
+          });
+        });
+
+        const recon = await runExposureReconcile({
+          apiBase,
+          modelAlias: latestAlias ?? modelAlias,
+          resources,
+          accessRows: applyExposureNativeHideDisplayMask(
+            applyManagedIdentityExcludeDisplayMask(accessRowsRough, apiBase),
+            apiBase
+          ),
+          providerLabels: {
+            oauth: (channel) => getTypeLabel(t, channel),
+            apiKey: (resource) => {
+              const brandLabel = t(`providersPage.providerNames.${resource.brand}`, {
+                defaultValue: resource.brand,
+              });
+              const entryLabel = resource.name ?? resource.identifier;
+              return entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
+            },
+          },
+        });
+        if (recon.failed.length) {
+          showNotification(
+            t('modelsPage.mapping.exposureReconcileFailed', {
+              defaultValue: '映射已保存，但原名暴露同步失败：{{detail}}',
+              detail: recon.failed.join('; '),
+            }),
+            'warning'
+          );
+        }
+      } catch (err: unknown) {
+        showNotification(
+          t('modelsPage.mapping.exposureReconcileFailed', {
+            defaultValue: '映射已保存，但原名暴露同步失败：{{detail}}',
+            detail: getErrorMessage(err),
+          }),
+          'warning'
+        );
+      }
+    };
+
     if (pureIdentity) {
       const finalAlias = aliasLiteral || baselineAlias;
       setSaving(true);
@@ -822,6 +917,7 @@ export function ModelAliasEditPage() {
         claimManualMapping(apiBase, finalAlias);
         syncSuspendedTags(finalAlias);
         await applyIdentityAccess(finalAlias);
+        await applyExposureReconcile();
         showNotification(
           t('modelsPage.mapping.saveSuccessPromoted', {
             defaultValue: '已转为手动映射渠道（同名目标无需改写别名）',
@@ -862,6 +958,7 @@ export function ModelAliasEditPage() {
         } else {
           syncSuspendedTags(finalAlias);
           await applyIdentityAccess(finalAlias);
+          await applyExposureReconcile();
           showNotification(
             t('modelsPage.mapping.saveSuccess', { defaultValue: '映射已保存' }),
             'success'
@@ -1028,6 +1125,7 @@ export function ModelAliasEditPage() {
 
       syncSuspendedTags(finalAlias);
       await applyIdentityAccess(finalAlias);
+      await applyExposureReconcile();
 
       const skippedIdentity =
         selectedTargets.length - persistableSelected.length > 0 &&

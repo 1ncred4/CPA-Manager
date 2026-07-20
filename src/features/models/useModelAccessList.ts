@@ -44,17 +44,18 @@ import {
   takeSuspendedCatalog,
   SUSPENDED_CATALOG_CHANGED_EVENT,
 } from './catalogSuspend';
-import { targetRefFromAccessRow } from './mappingSuspend';
 import {
   applyManagedIdentityExcludeDisplayMask,
   clearManagedIdentityExcludeIfPresent,
   MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT,
 } from './managedIdentityExclude';
 import {
-  pruneMappingsForDisabledTarget,
-  restoreMappingsForEnabledTarget,
-  type MappingSyncResult,
-} from './syncMappingOnAccessToggle';
+  applyExposureNativeHideDisplayMask,
+  EXPOSURE_NATIVE_HIDE_CHANGED_EVENT,
+  isExposureNativeHideKey,
+  unmarkExposureNativeHide,
+} from './exposureNativeHide';
+import { accessRowToTargetRef } from './modelMapping';
 
 export type UseModelAccessListResult = {
   rows: ModelAccessRow[];
@@ -198,7 +199,7 @@ export function useModelAccessList(): UseModelAccessListResult {
     return () => window.removeEventListener(SUSPENDED_CATALOG_CHANGED_EVENT, onChange);
   }, [apiBase]);
 
-  // 受管 identity 排除标记变化时刷新显示掩码
+  // 受管 identity / exposure-hide 标记变化时刷新显示掩码
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onChange = (event: Event) => {
@@ -207,7 +208,11 @@ export function useModelAccessList(): UseModelAccessListResult {
       setManagedExcludeTick((n) => n + 1);
     };
     window.addEventListener(MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT, onChange);
-    return () => window.removeEventListener(MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT, onChange);
+    window.addEventListener(EXPOSURE_NATIVE_HIDE_CHANGED_EVENT, onChange);
+    return () => {
+      window.removeEventListener(MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT, onChange);
+      window.removeEventListener(EXPOSURE_NATIVE_HIDE_CHANGED_EVENT, onChange);
+    };
   }, [apiBase]);
 
   const suspendedCatalogByResource = useMemo(() => {
@@ -351,7 +356,12 @@ export function useModelAccessList(): UseModelAccessListResult {
     });
 
     void managedExcludeTick;
-    return applyManagedIdentityExcludeDisplayMask(sortModelAccessRows(built), apiBase);
+    // managedIdentity（历史）+ exposure-hide（顶层藏原名）都在禁用 tab 显示为启用
+    const sorted = sortModelAccessRows(built);
+    return applyExposureNativeHideDisplayMask(
+      applyManagedIdentityExcludeDisplayMask(sorted, apiBase),
+      apiBase
+    );
   }, [
     allApiKeyResources,
     apiBase,
@@ -376,95 +386,27 @@ export function useModelAccessList(): UseModelAccessListResult {
     });
   };
 
-  const notifyMappingSync = useCallback(
-    (sync: MappingSyncResult, mode: 'prune' | 'restore') => {
-      if (sync.failed) {
-        showNotification(
-          `${t(
-            mode === 'prune'
-              ? 'modelsPage.access.mappingPruneFailed'
-              : 'modelsPage.access.mappingRestoreFailed',
-            {
-              defaultValue:
-                mode === 'prune'
-                  ? 'Model disabled, but failed to detach mapping targets'
-                  : 'Model enabled, but failed to restore mapping targets',
-            }
-          )}: ${sync.errorMessage ?? ''}`.trim(),
-          'warning'
-        );
-        return;
-      }
-      if (mode === 'prune' && sync.pruned > 0) {
-        showNotification(
-          t('modelsPage.access.mappingPruned', {
-            defaultValue: 'Detached {{count}} mapping target(s); will restore when re-enabled',
-            count: sync.pruned,
-          }),
-          'success'
-        );
-        return;
-      }
-      if (mode === 'restore' && sync.restored > 0) {
-        showNotification(
-          t('modelsPage.access.mappingRestored', {
-            defaultValue: 'Restored {{count}} mapping target(s)',
-            count: sync.restored,
-          }),
-          'success'
-        );
-      }
-    },
-    [showNotification, t]
-  );
-
-  const syncMappingsAfterToggle = useCallback(
-    async (row: ModelAccessRow, enabled: boolean) => {
-      const target = targetRefFromAccessRow(row);
-      if (!target) return;
-
-      if (enabled) {
-        // 启用后 API Key 资源可能刚 refetch；用最新 resources
-        const resources =
-          workbenchRef.current.snapshot?.groups.flatMap((g) => g.resources) ??
-          resourcesRef.current;
-        const sync = await restoreMappingsForEnabledTarget({
-          apiBase,
-          target,
-          resources,
-        });
-        notifyMappingSync(sync, 'restore');
-        if (sync.restored > 0 && target.source === 'apiKey') {
-          await workbenchRef.current.refetch();
-        }
-        return;
-      }
-
-      const resources =
-        workbenchRef.current.snapshot?.groups.flatMap((g) => g.resources) ?? resourcesRef.current;
-      const sync = await pruneMappingsForDisabledTarget({
-        apiBase,
-        target,
-        resources,
-      });
-      notifyMappingSync(sync, 'prune');
-      if (sync.pruned > 0 && target.source === 'apiKey') {
-        await workbenchRef.current.refetch();
-      }
-    },
-    [apiBase, notifyMappingSync]
-  );
+  /**
+   * 用户在「模型禁用」主动操作时：去掉 exposure-hide / managed-identity 掩码，
+   * 之后按真实 excluded 呈现。映射关系不再随底层启停剪枝（三层解耦）。
+   */
+  const clearAccessDisplayMasks = (row: ModelAccessRow) => {
+    clearManagedIdentityExcludeIfPresent(apiBase, row.key);
+    if (isExposureNativeHideKey(apiBase, row.key)) {
+      const ref = accessRowToTargetRef(row);
+      if (ref) unmarkExposureNativeHide(apiBase, ref);
+    }
+  };
 
   const toggleRow = useCallback(
     async (row: ModelAccessRow, enabled: boolean) => {
       if (disableControls || row.toggleDisabled || !row.supportsExclude) return;
 
       const wantExclude = !enabled;
+      clearAccessDisplayMasks(row);
 
       if (row.source === 'oauth' && row.oauthChannel) {
         const channel = row.oauthChannel;
-        // 用户主动开关：去掉「受管排除」显示掩码，按真实 excluded 呈现
-        clearManagedIdentityExcludeIfPresent(apiBase, row.key);
         const snapshotBefore = normalizeOAuthExcludedRules(excludedRef.current[channel] ?? []);
         const optimistic = updateOAuthExcludedRule(snapshotBefore, row.modelId, wantExclude);
         setExcluded((prev) => ({ ...prev, [channel]: optimistic }));
@@ -491,8 +433,6 @@ export function useModelAccessList(): UseModelAccessListResult {
               delete rest[channel];
               excludedRef.current = rest;
             }
-
-            await syncMappingsAfterToggle(row, enabled);
           });
         } catch (err) {
           setExcluded((prev) => ({ ...prev, [channel]: snapshotBefore }));
@@ -520,18 +460,12 @@ export function useModelAccessList(): UseModelAccessListResult {
           try {
             await enqueueSerial(apiKeyQueuesRef.current, resourceId, async () => {
               if (wantExclude) {
-                // 先剪枝映射（此时 models[] 里还在），再从目录摘掉
-                await syncMappingsAfterToggle(row, false);
-
                 const latestResource =
                   resourcesRef.current.find((r) => r.id === resourceId) ?? resource;
                 const cfg = latestResource.raw as OpenAIProviderConfig;
-                // prune 可能已清掉 alias，但 name 条目仍在；以最新 raw 为准
                 const currentModels = (cfg.models ?? []) as ModelAlias[];
                 const { next, removed } = removeModelFromCatalog(currentModels, row.modelId);
 
-                // 若 prune 已把 alias 清掉，removed 可能只剩裸 name；挂起仍用 removed
-                // 若映射挂起里还有 alias，启用时 restoreMappings 会再写回 alias
                 const entriesToSuspend =
                   removed.length > 0 ? removed : ([{ name: row.modelId }] as ModelAlias[]);
                 mergeSuspendedCatalog(apiBase, resourceId, row.modelId, entriesToSuspend);
@@ -541,7 +475,6 @@ export function useModelAccessList(): UseModelAccessListResult {
                     await updateApiKeyModels(latestResource, next);
                   }
                 } catch (writeErr) {
-                  // 写回失败：撤掉 catalog 挂起，避免「目录还在却显示已禁用」
                   takeSuspendedCatalog(apiBase, resourceId, row.modelId);
                   throw writeErr;
                 }
@@ -551,7 +484,6 @@ export function useModelAccessList(): UseModelAccessListResult {
                 return;
               }
 
-              // 启用：先写回 models[]，再恢复映射
               const suspended = takeSuspendedCatalog(apiBase, resourceId, row.modelId);
               const toRestore = suspended?.entries?.length
                 ? suspended.entries
@@ -566,14 +498,12 @@ export function useModelAccessList(): UseModelAccessListResult {
               try {
                 await updateApiKeyModels(latestResource, next);
               } catch (writeErr) {
-                // 写回失败：把 catalog 挂起放回去
                 mergeSuspendedCatalog(apiBase, resourceId, row.modelId, toRestore);
                 throw writeErr;
               }
 
               setCatalogSuspendTick((n) => n + 1);
               await workbenchRef.current.refetch();
-              await syncMappingsAfterToggle(row, true);
             });
           } catch (err) {
             showNotification(
@@ -615,7 +545,6 @@ export function useModelAccessList(): UseModelAccessListResult {
 
             await updateApiKeyExcludedModels(latestResource, finalList);
             await workbenchRef.current.refetch();
-            await syncMappingsAfterToggle(row, enabled);
           });
         } catch (err) {
           setApiKeyExcludedOverrides((prev) => ({ ...prev, [resourceId]: previousList }));
@@ -631,7 +560,7 @@ export function useModelAccessList(): UseModelAccessListResult {
         }
       }
     },
-    [apiBase, disableControls, showNotification, syncMappingsAfterToggle, t]
+    [apiBase, disableControls, showNotification, t]
   );
 
   const refresh = useCallback(async () => {

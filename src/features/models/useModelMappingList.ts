@@ -39,6 +39,11 @@ import {
   MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT,
 } from './managedIdentityExclude';
 import {
+  applyExposureNativeHideDisplayMask,
+  EXPOSURE_NATIVE_HIDE_CHANGED_EVENT,
+} from './exposureNativeHide';
+import { runExposureReconcile } from './runExposureReconcile';
+import {
   applyApiKeyModelAliasChanges,
   applyOauthAliasTargetChanges,
   assembleManualAndAutoMappingRows,
@@ -230,9 +235,14 @@ export function useModelMappingList(): UseModelMappingListResult {
       );
     });
 
-    setAccessRows(built);
+    setAccessRows(
+      applyExposureNativeHideDisplayMask(
+        applyManagedIdentityExcludeDisplayMask(built, apiBase),
+        apiBase
+      )
+    );
     setLoading(false);
-  }, [resolvedTheme, t]);
+  }, [apiBase, resolvedTheme, t]);
 
   useEffect(() => {
     void loadAll();
@@ -259,22 +269,34 @@ export function useModelMappingList(): UseModelMappingListResult {
       if (event.key.includes('manual-mapping-claims')) setClaimsEpoch((n) => n + 1);
       if (event.key.includes('managed-identity-exclude')) {
         // 触发 access 行重建（依赖 excluded/oauth 重算后的 mask）
-        setAccessRows((prev) => applyManagedIdentityExcludeDisplayMask(prev, apiBase));
+        setAccessRows((prev) =>
+          applyExposureNativeHideDisplayMask(
+            applyManagedIdentityExcludeDisplayMask(prev, apiBase),
+            apiBase
+          )
+        );
       }
     };
     const onManagedExclude = (event: Event) => {
       const detail = (event as CustomEvent<{ apiBase?: string }>).detail;
       if (detail?.apiBase && detail.apiBase !== apiBase) return;
-      setAccessRows((prev) => applyManagedIdentityExcludeDisplayMask(prev, apiBase));
+      setAccessRows((prev) =>
+        applyExposureNativeHideDisplayMask(
+          applyManagedIdentityExcludeDisplayMask(prev, apiBase),
+          apiBase
+        )
+      );
     };
     window.addEventListener(SUSPENDED_MAPPINGS_CHANGED_EVENT, onSuspendedChanged);
     window.addEventListener(MANUAL_MAPPING_CLAIMS_CHANGED_EVENT, onClaimsChanged);
     window.addEventListener(MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT, onManagedExclude);
+    window.addEventListener(EXPOSURE_NATIVE_HIDE_CHANGED_EVENT, onManagedExclude);
     window.addEventListener('storage', onStorage);
     return () => {
       window.removeEventListener(SUSPENDED_MAPPINGS_CHANGED_EVENT, onSuspendedChanged);
       window.removeEventListener(MANUAL_MAPPING_CLAIMS_CHANGED_EVENT, onClaimsChanged);
       window.removeEventListener(MANAGED_IDENTITY_EXCLUDE_CHANGED_EVENT, onManagedExclude);
+      window.removeEventListener(EXPOSURE_NATIVE_HIDE_CHANGED_EVENT, onManagedExclude);
       window.removeEventListener('storage', onStorage);
     };
   }, [apiBase]);
@@ -306,7 +328,12 @@ export function useModelMappingList(): UseModelMappingListResult {
       const providerLabel = entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
       built.push(...buildApiKeyAccessRows({ resource, providerLabel, iconSrc }));
     });
-    setAccessRows(applyManagedIdentityExcludeDisplayMask(built, apiBase));
+    setAccessRows(
+      applyExposureNativeHideDisplayMask(
+        applyManagedIdentityExcludeDisplayMask(built, apiBase),
+        apiBase
+      )
+    );
   }, [allApiKeyResources, apiBase, excluded, loading, oauthModels, resolvedTheme, t]);
 
   const enabledKeySet = useMemo(() => {
@@ -514,6 +541,29 @@ export function useModelMappingList(): UseModelMappingListResult {
               })
             );
 
+            // 删除认领后释放原名暴露
+            try {
+              await runExposureReconcile({
+                apiBase,
+                modelAlias: modelAliasRef.current,
+                resources: resourcesRef.current,
+                accessRows,
+                oauthModels,
+                providerLabels: {
+                  oauth: (channel) => getTypeLabel(t, channel),
+                  apiKey: (resource) => {
+                    const brandLabel = t(`providersPage.providerNames.${resource.brand}`, {
+                      defaultValue: resource.brand,
+                    });
+                    const entryLabel = resource.name ?? resource.identifier;
+                    return entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
+                  },
+                },
+              });
+            } catch {
+              // best-effort; list refresh still happens
+            }
+
             showNotification(
               t('modelsPage.mapping.deleteSuccess', {
                 defaultValue: '手动映射已删除，同名模型已回到自动映射',
@@ -530,7 +580,7 @@ export function useModelMappingList(): UseModelMappingListResult {
         },
       });
     },
-    [apiBase, loadAll, rows, showConfirmation, showNotification, t]
+    [accessRows, apiBase, loadAll, oauthModels, rows, showConfirmation, showNotification, t]
   );
 
   return {

@@ -750,20 +750,42 @@ export function attachNativeIdentityTargets(
 }
 
 /**
+ * 手动渠道认领的 modelId（含渠道内禁用 / suspended 目标）。
+ * 认领后不得进入自动映射（避免「已进渠道但禁用 → 原名回流」）。
+ */
+export function collectClaimedModelIdsFromRows(rows: FederatedMappingRow[]): Set<string> {
+  const set = new Set<string>();
+  rows.forEach((row) => {
+    row.targets.forEach((target) => {
+      const id = lower(target.modelId);
+      if (id) set.add(id);
+    });
+  });
+  return set;
+}
+
+/**
  * 自动映射渠道：尚未被手动映射覆盖的已启用模型，按 modelId 聚合（同名合并）。
  * 单来源也会生成渠道；不写后端 alias。
  *
  * @param coveredTargetKeys 已出现在手动映射行中的目标 key
  * @param manualAliasKeys 已有手动渠道的 aliasKey（这些名字不再单独出现自动渠道，同名已并入手动）
+ * @param claimedModelIds 被任意手动边认领的 modelId（含 channel 禁用），整 id 不得进自动
  */
 export function buildAutoMappingRows(
   accessRows: ModelAccessRow[],
   coveredTargetKeys: Set<string>,
-  manualAliasKeys?: Iterable<string>
+  manualAliasKeys?: Iterable<string>,
+  claimedModelIds?: Iterable<string>
 ): FederatedMappingRow[] {
   const manualKeys = new Set(
     Array.from(manualAliasKeys ?? [])
       .map((k) => toAliasKey(k))
+      .filter(Boolean)
+  );
+  const claimedIds = new Set(
+    Array.from(claimedModelIds ?? [])
+      .map((k) => lower(String(k)))
       .filter(Boolean)
   );
   const groups = new Map<string, { alias: string; targets: MappingTarget[]; seen: Set<string> }>();
@@ -774,7 +796,8 @@ export function buildAutoMappingRows(
     const tKey = mappingTargetKey(target);
     if (coveredTargetKeys.has(tKey)) return;
     const aliasKey = lower(target.modelId);
-    if (!aliasKey || manualKeys.has(aliasKey)) return;
+    // 被手动认领的 modelId（任意来源）一律不进自动映射
+    if (!aliasKey || manualKeys.has(aliasKey) || claimedIds.has(aliasKey)) return;
     let bucket = groups.get(aliasKey);
     if (!bucket) {
       bucket = { alias: target.modelId.trim(), targets: [], seen: new Set() };
@@ -925,7 +948,9 @@ export function assembleManualAndAutoMappingRows(
 
   const covered = collectMappedTargetKeys(manualRows);
   const manualAliasKeys = manualRows.map((r) => r.aliasKey);
-  const autoRows = buildAutoMappingRows(accessRows, covered, manualAliasKeys);
+  // 含 suspended / 渠道禁用目标：只要还在手动边里就认领 modelId
+  const claimedModelIds = collectClaimedModelIdsFromRows(manualRows);
+  const autoRows = buildAutoMappingRows(accessRows, covered, manualAliasKeys, claimedModelIds);
 
   return { manualRows, autoRows };
 }
