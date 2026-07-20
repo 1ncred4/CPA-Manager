@@ -372,9 +372,18 @@ export function ModelAliasEditPage() {
       if (aliasFromParams) {
         const match = federated.find((row) => row.aliasKey === toAliasKey(aliasFromParams));
         const resolvedAlias = match?.alias ?? aliasFromParams;
+        // 渠道内已禁用（localStorage 挂起）的目标不得再进 selectedKeys。
+        // attachNativeIdentityTargets 会把同名原生模型自动挂回行上；若不排除挂起项，
+        // 用户移除/禁用的 identity 目标保存后再打开会被重新勾选。
+        const suspended = listSuspendedForAlias(apiBase, resolvedAlias);
+        const suspendedKeySet = new Set(
+          suspended.map((entry) => mappingTargetKey(entry.target))
+        );
         // 活跃目标不含挂起项（挂起仅存 localStorage，后端已剪枝）
         // 但包含 currentlyEnabled=false 的「已禁用但仍映射」目标，须出现在 tag 列表
-        const liveTargets = (match?.targets ?? []).filter((target) => !target.suspended);
+        const liveTargets = (match?.targets ?? []).filter(
+          (target) => !target.suspended && !suspendedKeySet.has(mappingTargetKey(target))
+        );
         const targets: MappingTargetRef[] = liveTargets.map((target) =>
           target.source === 'oauth'
             ? { source: 'oauth', channel: target.channel, modelId: target.modelId }
@@ -386,7 +395,9 @@ export function ModelAliasEditPage() {
               }
         );
         // 用联邦行补齐禁用目标的展示信息（accessRows 若已无该模型则仍可显示）
-        liveTargets.forEach((target) => {
+        // 含挂起 identity：仍要能显示灰标 chip
+        const metaSourceTargets = (match?.targets ?? []).filter((target) => !target.suspended);
+        metaSourceTargets.forEach((target) => {
           const key = mappingTargetKey(target);
           if (chipMeta.has(key)) {
             // access 有该行时以 access 为准（enabled 更准），仅补全缺失
@@ -418,7 +429,6 @@ export function ModelAliasEditPage() {
           });
         });
 
-        const suspended = listSuspendedForAlias(apiBase, resolvedAlias);
         setTargetChipMeta(chipMeta);
         setAlias(resolvedAlias);
         setBaselineAlias(resolvedAlias);
@@ -521,20 +531,31 @@ export function ModelAliasEditPage() {
   };
 
   const removeSelected = (key: string) => {
+    const ref = resolveTargetRef(key);
+    const aliasLiteral = alias.trim() || baselineAlias;
     setSelectedKeys((prev) => {
       const next = new Set(prev);
       next.delete(key);
       return next;
     });
-    // Permanent remove also drops channel-local disable residue.
+    // 同名 identity 目标会被 attachNative 在下次加载时自动挂回。
+    // 永久「×」对 identity 也记为渠道内挂起，否则保存后一刷新又出现。
+    if (ref && aliasLiteral && isIdentityMappingTarget(aliasLiteral, ref)) {
+      setSuspendedTargets((prev) => {
+        if (prev.some((entry) => mappingTargetKey(entry.target) === key)) return prev;
+        return [...prev, { alias: aliasLiteral, target: ref }];
+      });
+      return;
+    }
+    // 跨名目标：永久移除，清掉渠道内挂起残留
     setSuspendedTargets((prev) =>
       prev.filter((entry) => mappingTargetKey(entry.target) !== key)
     );
   };
 
-  /** 从编辑页 tag 列表移除一条挂起目标（仅本地状态，保存时再写 localStorage） */
+  /** 从 tag 列表移除挂起目标（跨名可删；同名 identity 见 UI：不显示 ×） */
   const removeSuspended = (key: string) => {
-    setSuspendedTargets((prev) => prev.filter((entry) => mappingTargetKey(entry.target) !== key));
+    setSuspendedTargets((prev) => prev.filter((e) => mappingTargetKey(e.target) !== key));
   };
 
   /**
@@ -1201,19 +1222,22 @@ export function ModelAliasEditPage() {
                             })}
                             onChange={(value) => setChannelTargetEnabled(chip.key, value)}
                           />
-                          <button
-                            type="button"
-                            className={styles.tagRemove}
-                            onClick={() =>
-                              chip.suspended
-                                ? removeSuspended(chip.key)
-                                : removeSelected(chip.key)
-                            }
-                            disabled={disableControls || saving}
-                            aria-label={t('common.delete')}
-                          >
-                            <IconX size={12} />
-                          </button>
+                          {/* 同名 identity 无法从渠道蒸发：用开关禁用，不提供 × 以免误以为已删除却刷新又回 */}
+                          {isIdentity ? null : (
+                            <button
+                              type="button"
+                              className={styles.tagRemove}
+                              onClick={() =>
+                                chip.suspended
+                                  ? removeSuspended(chip.key)
+                                  : removeSelected(chip.key)
+                              }
+                              disabled={disableControls || saving}
+                              aria-label={t('common.delete')}
+                            >
+                              <IconX size={12} />
+                            </button>
+                          )}
                         </span>
                       </span>
                     );
