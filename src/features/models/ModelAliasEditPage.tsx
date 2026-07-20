@@ -57,6 +57,7 @@ import {
   collectConfiguredOauthChannelsForAlias,
   filterPersistableMappingTargets,
   getMappingDraftSignature,
+  isIdentityMappingTarget,
   mappingTargetKey,
   planAliasTargetAssignments,
   toAliasKey,
@@ -66,6 +67,7 @@ import {
   type MappingValidationError,
 } from './modelMapping';
 import { updateApiKeyModels } from './updateApiKeyModels';
+import { syncIdentityAccessOnMappingSave } from './syncIdentityAccessOnMapping';
 import styles from './ModelAliasEdit.module.scss';
 
 type LocationState = { fromModels?: boolean } | null;
@@ -533,8 +535,9 @@ export function ModelAliasEditPage() {
   };
 
   /**
-   * 渠道级启停：只改 selectedKeys / suspendedTargets，不写全局 excluded/catalog。
-   * OFF → 摘到 suspended；ON → 写回 selected。
+   * 渠道级启停：先改 selectedKeys / suspendedTargets。
+   * 跨名目标：保存时只剪枝本渠道 alias（真正渠道内）。
+   * 同名 identity（alias===modelId）：保存时会写全局排除，否则原生路由仍可达。
    */
   const setChannelTargetEnabled = (key: string, enabled: boolean) => {
     const ref = resolveTargetRef(key);
@@ -699,8 +702,11 @@ export function ModelAliasEditPage() {
 
     return [...active, ...suspendedChips];
   }, [
+    alias,
+    baselineAlias,
     baselineTargets,
     optionByKey,
+    resolveTargetRef,
     resources,
     resolvedTheme,
     selectedKeys,
@@ -746,18 +752,68 @@ export function ModelAliasEditPage() {
       }
     };
 
+    const applyIdentityAccess = async (finalAliasName: string) => {
+      const sync = await syncIdentityAccessOnMappingSave({
+        apiBase,
+        alias: finalAliasName,
+        selectedTargets,
+        suspendedTargets,
+        resources,
+      });
+      if (sync.failed.length) {
+        showNotification(
+          t('modelsPage.mapping.identityAccessSyncFailed', {
+            defaultValue:
+              '映射已保存，但同名目标的原名启停同步失败：{{detail}}',
+            detail: sync.failed.join('; '),
+          }),
+          'warning'
+        );
+      } else if (sync.forked > 0 && sync.excluded === 0) {
+        showNotification(
+          t('modelsPage.mapping.identityAccessForked', {
+            defaultValue:
+              '已关闭 {{count}} 个同名目标的原名入口（fork=关，模型仍可通过其它别名使用）',
+            count: sync.forked,
+          }),
+          'success'
+        );
+      } else if (sync.excluded > 0) {
+        showNotification(
+          t('modelsPage.mapping.identityAccessExcluded', {
+            defaultValue:
+              '已全局禁用 {{count}} 个同名目标（无其它别名可挂 fork；其它渠道也无法再选该模型）',
+            count: sync.excluded,
+          }),
+          'warning'
+        );
+      }
+      return sync;
+    };
+
     if (pureIdentity) {
       const finalAlias = aliasLiteral || baselineAlias;
-      claimManualMapping(apiBase, finalAlias);
-      syncSuspendedTags(finalAlias);
-      showNotification(
-        t('modelsPage.mapping.saveSuccessPromoted', {
-          defaultValue: '已转为手动映射渠道（同名目标无需改写别名）',
-        }),
-        'success'
-      );
-      allowNextNavigation();
-      handleBack();
+      setSaving(true);
+      try {
+        claimManualMapping(apiBase, finalAlias);
+        syncSuspendedTags(finalAlias);
+        await applyIdentityAccess(finalAlias);
+        showNotification(
+          t('modelsPage.mapping.saveSuccessPromoted', {
+            defaultValue: '已转为手动映射渠道（同名目标无需改写别名）',
+          }),
+          'success'
+        );
+        allowNextNavigation();
+        handleBack();
+      } catch (err: unknown) {
+        showNotification(
+          `${t('modelsPage.mapping.saveFailed', { defaultValue: '保存映射失败' })}: ${getErrorMessage(err)}`,
+          'error'
+        );
+      } finally {
+        setSaving(false);
+      }
       return;
     }
 
@@ -781,6 +837,7 @@ export function ModelAliasEditPage() {
           // fall through to backend clear + suspended rewrite below with empty next plan
         } else {
           syncSuspendedTags(finalAlias);
+          await applyIdentityAccess(finalAlias);
           showNotification(
             t('modelsPage.mapping.saveSuccess', { defaultValue: '映射已保存' }),
             'success'
@@ -946,6 +1003,7 @@ export function ModelAliasEditPage() {
       }
 
       syncSuspendedTags(finalAlias);
+      await applyIdentityAccess(finalAlias);
 
       const skippedIdentity =
         selectedTargets.length - persistableSelected.length > 0 &&
@@ -1091,11 +1149,21 @@ export function ModelAliasEditPage() {
                     // Globally disabled (still mapped): keep channel checked but lock toggle.
                     const globallyDisabled = chip.disabled && !chip.suspended;
                     const channelEnabled = !chip.suspended;
+                    const ref = resolveTargetRef(chip.key);
+                    const isIdentity =
+                      Boolean(ref) &&
+                      isIdentityMappingTarget(alias.trim() || baselineAlias, ref!);
                     const title = chip.suspended
-                      ? t('modelsPage.mapping.targetChannelDisabledHint', {
-                          defaultValue: '{{label}}（渠道内已禁用，启用后恢复）',
-                          label: `${chip.providerLabel} · ${chip.label}`,
-                        })
+                      ? isIdentity
+                        ? t('modelsPage.mapping.targetIdentityChannelDisabledHint', {
+                            defaultValue:
+                              '{{label}}（同名目标：保存后优先关闭原名入口 fork；若无其它别名才全局禁用）',
+                            label: `${chip.providerLabel} · ${chip.label}`,
+                          })
+                        : t('modelsPage.mapping.targetChannelDisabledHint', {
+                            defaultValue: '{{label}}（渠道内已禁用，启用后恢复）',
+                            label: `${chip.providerLabel} · ${chip.label}`,
+                          })
                       : chip.disabled
                         ? t('modelsPage.mapping.targetDisabledHint', {
                             defaultValue: '{{label}}（当前已禁用）',
