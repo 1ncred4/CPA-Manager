@@ -35,6 +35,10 @@ import { MANAGEMENT_API_PREFIX } from '@/utils/constants';
 import { formatUnixTimestamp } from '@/utils/format';
 import { HTTP_METHODS, STATUS_GROUPS, resolveStatusGroup, type LogState } from './hooks/logTypes';
 import { parseLogLine } from './hooks/logParsing';
+import {
+  buildErrorLogSummary,
+  type ErrorLogSummary,
+} from './hooks/errorLogParsing';
 import { useLogFilters } from './hooks/useLogFilters';
 import { isNearBottom, useLogScroller } from './hooks/useLogScroller';
 import styles from './LogsPage.module.scss';
@@ -44,6 +48,15 @@ interface ErrorLogItem {
   size?: number;
   modified?: number;
 }
+
+type ErrorLogSummaryStatus = 'loading' | 'ready' | 'error';
+
+interface ErrorLogSummaryState {
+  status: ErrorLogSummaryStatus;
+  summary: ErrorLogSummary;
+}
+
+const ERROR_LOG_SUMMARY_CONCURRENCY = 3;
 
 // 初始只渲染最近 100 行，滚动到顶部再逐步加载更多（避免一次性渲染过多导致卡顿）
 const INITIAL_DISPLAY_LINES = 100;
@@ -171,6 +184,9 @@ export function LogsPage() {
   const [errorLogs, setErrorLogs] = useState<ErrorLogItem[]>([]);
   const [loadingErrors, setLoadingErrors] = useState(false);
   const [errorLogsError, setErrorLogsError] = useState('');
+  const [errorLogSummaries, setErrorLogSummaries] = useState<
+    Record<string, ErrorLogSummaryState>
+  >({});
   const [selectedErrorLog, setSelectedErrorLog] = useState<ErrorLogItem | null>(null);
   const [selectedErrorLogText, setSelectedErrorLogText] = useState('');
   const [selectedErrorLogError, setSelectedErrorLogError] = useState('');
@@ -181,6 +197,8 @@ export function LogsPage() {
 
   const requestLogHomeIpByIdRef = useRef<Record<string, string>>({});
   const errorLogViewRequestRef = useRef(0);
+  const errorLogContentCacheRef = useRef<Map<string, string>>(new Map());
+  const errorLogSummaryFetchedRef = useRef<Set<string>>(new Set());
   const longPressRef = useRef<{
     timer: number | null;
     startX: number;
@@ -380,6 +398,7 @@ export function LogsPage() {
       setLoadingErrors(false);
       setErrorLogs([]);
       setErrorLogsError('');
+      setErrorLogSummaries({});
       return;
     }
 
@@ -388,10 +407,43 @@ export function LogsPage() {
     try {
       const res = await logsApi.fetchErrorLogs();
       // API 返回 { files: [...] }
-      setErrorLogs(Array.isArray(res.files) ? res.files : []);
+      const files = Array.isArray(res.files) ? res.files : [];
+      setErrorLogs(files);
+
+      // Seed list rows with filename-only summaries immediately.
+      setErrorLogSummaries((prev) => {
+        const next: Record<string, ErrorLogSummaryState> = {};
+        for (const file of files) {
+          const existing = prev[file.name];
+          if (existing?.status === 'ready') {
+            next[file.name] = existing;
+            continue;
+          }
+          next[file.name] = {
+            status: errorLogSummaryFetchedRef.current.has(file.name) ? 'ready' : 'loading',
+            summary:
+              existing?.summary ??
+              (errorLogContentCacheRef.current.has(file.name)
+                ? buildErrorLogSummary(file.name, errorLogContentCacheRef.current.get(file.name))
+                : buildErrorLogSummary(file.name)),
+          };
+          if (errorLogContentCacheRef.current.has(file.name)) {
+            next[file.name] = {
+              status: 'ready',
+              summary: buildErrorLogSummary(
+                file.name,
+                errorLogContentCacheRef.current.get(file.name)
+              ),
+            };
+            errorLogSummaryFetchedRef.current.add(file.name);
+          }
+        }
+        return next;
+      });
     } catch (err: unknown) {
       console.error('Failed to load error logs:', err);
       setErrorLogs([]);
+      setErrorLogSummaries({});
       const message = getErrorMessage(err);
       setErrorLogsError(
         message ? `${t('logs.error_logs_load_error')}: ${message}` : t('logs.error_logs_load_error')
@@ -404,7 +456,14 @@ export function LogsPage() {
   const downloadErrorLog = async (name: string) => {
     try {
       const response = await logsApi.downloadErrorLog(name);
-      downloadBlob({ filename: name, blob: new Blob([response.data], { type: 'text/plain' }) });
+      const text = await responseDataToText(response.data);
+      if (text) {
+        errorLogContentCacheRef.current.set(name, text);
+      }
+      downloadBlob({
+        filename: name,
+        blob: new Blob([response.data], { type: 'text/plain' }),
+      });
       showNotification(t('logs.error_log_download_success'), 'success');
     } catch (err: unknown) {
       const message = getErrorMessage(err);
@@ -424,9 +483,23 @@ export function LogsPage() {
     setSelectedErrorLogLoading(true);
 
     try {
-      const response = await logsApi.downloadErrorLog(item.name);
-      const text = await responseDataToText(response.data);
+      const cached = errorLogContentCacheRef.current.get(item.name);
+      const text =
+        cached ??
+        (await (async () => {
+          const response = await logsApi.downloadErrorLog(item.name);
+          return responseDataToText(response.data);
+        })());
       if (errorLogViewRequestRef.current !== requestId) return;
+      if (text) {
+        errorLogContentCacheRef.current.set(item.name, text);
+        const summary = buildErrorLogSummary(item.name, text);
+        errorLogSummaryFetchedRef.current.add(item.name);
+        setErrorLogSummaries((prev) => ({
+          ...prev,
+          [item.name]: { status: 'ready', summary },
+        }));
+      }
       setSelectedErrorLogText(text);
     } catch (err: unknown) {
       if (errorLogViewRequestRef.current !== requestId) return;
@@ -490,6 +563,81 @@ export function LogsPage() {
     void loadErrorLogs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, connectionStatus, requestLogEnabled]);
+
+  // Prefetch error-log content summaries (model / status / message) with limited concurrency.
+  useEffect(() => {
+    if (activeTab !== 'errors') return;
+    if (connectionStatus !== 'connected' || isHomeRuntime) return;
+    if (errorLogs.length === 0) return;
+
+    let cancelled = false;
+    const queue = errorLogs
+      .map((item) => item.name)
+      .filter((name) => !errorLogSummaryFetchedRef.current.has(name));
+
+    if (queue.length === 0) return;
+
+    // Mark queued rows as loading so the UI can show a subtle indicator.
+    setErrorLogSummaries((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const name of queue) {
+        if (next[name]?.status === 'ready') continue;
+        next[name] = {
+          status: 'loading',
+          summary: next[name]?.summary ?? buildErrorLogSummary(name),
+        };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+
+    const runWorker = async () => {
+      while (!cancelled) {
+        const name = queue.shift();
+        if (!name) return;
+
+        try {
+          let text = errorLogContentCacheRef.current.get(name);
+          if (text === undefined) {
+            const response = await logsApi.downloadErrorLog(name);
+            if (cancelled) return;
+            text = await responseDataToText(response.data);
+            if (cancelled) return;
+            if (text) {
+              errorLogContentCacheRef.current.set(name, text);
+            }
+          }
+
+          const summary = buildErrorLogSummary(name, text ?? '');
+          errorLogSummaryFetchedRef.current.add(name);
+          if (cancelled) return;
+          setErrorLogSummaries((prev) => ({
+            ...prev,
+            [name]: { status: 'ready', summary },
+          }));
+        } catch {
+          if (cancelled) return;
+          // Silent failure: keep filename-derived fields, stop retrying this file.
+          errorLogSummaryFetchedRef.current.add(name);
+          setErrorLogSummaries((prev) => ({
+            ...prev,
+            [name]: {
+              status: 'error',
+              summary: prev[name]?.summary ?? buildErrorLogSummary(name),
+            },
+          }));
+        }
+      }
+    };
+
+    const workerCount = Math.min(ERROR_LOG_SUMMARY_CONCURRENCY, queue.length);
+    void Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, connectionStatus, isHomeRuntime, errorLogs]);
 
   useEffect(() => {
     if (!autoRefresh || connectionStatus !== 'connected' || showFileLoggingRequired) {
@@ -720,7 +868,7 @@ export function LogsPage() {
   };
 
   const getMethodClass = (method?: string) => {
-    switch (method) {
+    switch ((method || '').toUpperCase()) {
       case 'GET':
         return styles.methodGet;
       case 'POST':
@@ -734,6 +882,26 @@ export function LogsPage() {
         return styles.methodOther;
     }
   };
+
+  const selectedErrorLogSummary = useMemo(() => {
+    if (!selectedErrorLog) return null;
+    if (selectedErrorLogText) {
+      return buildErrorLogSummary(selectedErrorLog.name, selectedErrorLogText);
+    }
+    return (
+      errorLogSummaries[selectedErrorLog.name]?.summary ??
+      buildErrorLogSummary(selectedErrorLog.name)
+    );
+  }, [selectedErrorLog, selectedErrorLogText, errorLogSummaries]);
+
+  const selectedErrorLogTitle = useMemo(() => {
+    if (!selectedErrorLog) return t('logs.error_log_view_title');
+    const summary = selectedErrorLogSummary;
+    if (summary?.model && summary.path) return `${summary.model} · ${summary.path}`;
+    if (summary?.model) return summary.model;
+    if (summary?.path) return summary.path;
+    return selectedErrorLog.name;
+  }, [selectedErrorLog, selectedErrorLogSummary, t]);
 
   const renderLogRows = () =>
     parsedVisibleLines.map((line, index) => {
@@ -1319,40 +1487,110 @@ export function LogsPage() {
                   <div className="hint">{t('logs.error_logs_empty')}</div>
                 ) : (
                   <div className="item-list">
-                    {errorLogs.map((item) => (
-                      <div key={item.name} className="item-row">
-                        <div className="item-meta">
-                          <div className="item-title">{item.name}</div>
-                          <div className="item-subtitle">
-                            {item.size ? `${(item.size / 1024).toFixed(1)} KB` : ''}{' '}
-                            {item.modified ? formatUnixTimestamp(item.modified) : ''}
+                    {errorLogs.map((item) => {
+                      const summaryState = errorLogSummaries[item.name];
+                      const summary =
+                        summaryState?.summary ?? buildErrorLogSummary(item.name);
+                      const title =
+                        summary.model || summary.path || item.name;
+                      const timeLabel =
+                        summary.timestamp ||
+                        (item.modified ? formatUnixTimestamp(item.modified) : '');
+                      const sizeLabel = item.size
+                        ? `${(item.size / 1024).toFixed(1)} KB`
+                        : '';
+
+                      return (
+                        <div key={item.name} className={`item-row ${styles.errorItemRow}`}>
+                          <div className={`item-meta ${styles.errorItemMeta}`}>
+                            <div className={`item-title ${styles.errorItemTitle}`} title={title}>
+                              {title}
+                            </div>
+                            <div className={styles.errorItemBadges}>
+                              {summary.method && (
+                                <span
+                                  className={[
+                                    styles.methodBadge,
+                                    getMethodClass(summary.method),
+                                  ].join(' ')}
+                                >
+                                  {summary.method}
+                                </span>
+                              )}
+                              {summary.path && summary.model && (
+                                <span className={styles.path} title={summary.path}>
+                                  {summary.path}
+                                </span>
+                              )}
+                              {typeof summary.statusCode === 'number' && (
+                                <span
+                                  className={[
+                                    styles.statusBadge,
+                                    getStatusClass(summary.statusCode),
+                                  ].join(' ')}
+                                >
+                                  {summary.statusCode}
+                                </span>
+                              )}
+                              {summary.requestId && (
+                                <span
+                                  className={styles.requestId}
+                                  title={summary.requestId}
+                                >
+                                  {summary.requestId}
+                                </span>
+                              )}
+                              {timeLabel && (
+                                <span className={styles.errorItemMetaText}>{timeLabel}</span>
+                              )}
+                              {sizeLabel && (
+                                <span className={styles.errorItemMetaText}>{sizeLabel}</span>
+                              )}
+                            </div>
+                            {summary.errorMessage ? (
+                              <div
+                                className={styles.errorItemMessage}
+                                title={summary.errorMessage}
+                              >
+                                {summary.errorMessage}
+                              </div>
+                            ) : summaryState?.status === 'loading' ? (
+                              <div className={styles.errorItemMessageMuted}>
+                                {t('logs.error_log_summary_loading')}
+                              </div>
+                            ) : null}
+                            <div className={styles.errorItemFilename} title={item.name}>
+                              {t('logs.error_log_filename')}: {item.name}
+                            </div>
+                          </div>
+                          <div className="item-actions">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                void openErrorLog(item);
+                              }}
+                              disabled={disableControls}
+                            >
+                              <span className={styles.buttonContent}>
+                                <IconEye size={16} />
+                                {t('logs.error_logs_open')}
+                              </span>
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                void downloadErrorLog(item.name);
+                              }}
+                              disabled={disableControls}
+                            >
+                              {t('logs.error_logs_download')}
+                            </Button>
                           </div>
                         </div>
-                        <div className="item-actions">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => {
-                              void openErrorLog(item);
-                            }}
-                            disabled={disableControls}
-                          >
-                            <span className={styles.buttonContent}>
-                              <IconEye size={16} />
-                              {t('logs.error_logs_open')}
-                            </span>
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => downloadErrorLog(item.name)}
-                            disabled={disableControls}
-                          >
-                            {t('logs.error_logs_download')}
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1364,7 +1602,7 @@ export function LogsPage() {
       <Modal
         open={Boolean(selectedErrorLog)}
         onClose={closeErrorLogViewer}
-        title={selectedErrorLog?.name ?? t('logs.error_log_view_title')}
+        title={selectedErrorLogTitle}
         width={960}
         footer={
           <>
@@ -1395,16 +1633,117 @@ export function LogsPage() {
       >
         <div className={styles.errorLogViewer}>
           {selectedErrorLog && (
-            <div className={styles.errorLogViewerMeta}>
-              <span>
-                {t('logs.error_logs_size')}:{' '}
-                {selectedErrorLog.size ? `${(selectedErrorLog.size / 1024).toFixed(1)} KB` : '-'}
-              </span>
-              <span>
-                {t('logs.error_logs_modified')}:{' '}
-                {selectedErrorLog.modified ? formatUnixTimestamp(selectedErrorLog.modified) : '-'}
-              </span>
-            </div>
+            <>
+              <div className={styles.errorLogViewerMeta}>
+                <span>
+                  {t('logs.error_logs_size')}:{' '}
+                  {selectedErrorLog.size
+                    ? `${(selectedErrorLog.size / 1024).toFixed(1)} KB`
+                    : '-'}
+                </span>
+                <span>
+                  {t('logs.error_logs_modified')}:{' '}
+                  {selectedErrorLog.modified
+                    ? formatUnixTimestamp(selectedErrorLog.modified)
+                    : '-'}
+                </span>
+                <span title={selectedErrorLog.name}>
+                  {t('logs.error_log_filename')}: {selectedErrorLog.name}
+                </span>
+              </div>
+
+              {selectedErrorLogSummary &&
+                (selectedErrorLogSummary.model ||
+                  selectedErrorLogSummary.path ||
+                  selectedErrorLogSummary.method ||
+                  typeof selectedErrorLogSummary.statusCode === 'number' ||
+                  selectedErrorLogSummary.requestId ||
+                  selectedErrorLogSummary.errorMessage) && (
+                  <div className={styles.errorLogSummaryCard}>
+                    <div className={styles.errorLogSummaryGrid}>
+                      {selectedErrorLogSummary.model && (
+                        <div className={styles.errorLogSummaryField}>
+                          <span className={styles.errorLogSummaryLabel}>
+                            {t('logs.error_log_model')}
+                          </span>
+                          <span className={styles.errorLogSummaryValue}>
+                            {selectedErrorLogSummary.model}
+                          </span>
+                        </div>
+                      )}
+                      {(selectedErrorLogSummary.method || selectedErrorLogSummary.path) && (
+                        <div className={styles.errorLogSummaryField}>
+                          <span className={styles.errorLogSummaryLabel}>
+                            {t('logs.error_log_path')}
+                          </span>
+                          <span className={styles.errorLogSummaryValueInline}>
+                            {selectedErrorLogSummary.method && (
+                              <span
+                                className={[
+                                  styles.methodBadge,
+                                  getMethodClass(selectedErrorLogSummary.method),
+                                ].join(' ')}
+                              >
+                                {selectedErrorLogSummary.method}
+                              </span>
+                            )}
+                            {selectedErrorLogSummary.path && (
+                              <span title={selectedErrorLogSummary.path}>
+                                {selectedErrorLogSummary.path}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      )}
+                      {typeof selectedErrorLogSummary.statusCode === 'number' && (
+                        <div className={styles.errorLogSummaryField}>
+                          <span className={styles.errorLogSummaryLabel}>
+                            {t('logs.error_log_status')}
+                          </span>
+                          <span
+                            className={[
+                              styles.statusBadge,
+                              getStatusClass(selectedErrorLogSummary.statusCode),
+                            ].join(' ')}
+                          >
+                            {selectedErrorLogSummary.statusCode}
+                          </span>
+                        </div>
+                      )}
+                      {selectedErrorLogSummary.requestId && (
+                        <div className={styles.errorLogSummaryField}>
+                          <span className={styles.errorLogSummaryLabel}>
+                            {t('logs.error_log_request_id')}
+                          </span>
+                          <span className={styles.requestId}>
+                            {selectedErrorLogSummary.requestId}
+                          </span>
+                        </div>
+                      )}
+                      {selectedErrorLogSummary.timestamp && (
+                        <div className={styles.errorLogSummaryField}>
+                          <span className={styles.errorLogSummaryLabel}>
+                            {t('logs.error_logs_modified')}
+                          </span>
+                          <span className={styles.errorLogSummaryValue}>
+                            {selectedErrorLogSummary.timestamp}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    {selectedErrorLogSummary.errorMessage && (
+                      <div className={styles.errorLogSummaryError}>
+                        <span className={styles.errorLogSummaryLabel}>
+                          {t('logs.error_log_error')}
+                        </span>
+                        <span className={styles.errorLogSummaryErrorText}>
+                          {selectedErrorLogSummary.errorMessage}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+            </>
           )}
           {selectedErrorLogError && <div className="error-box">{selectedErrorLogError}</div>}
           {selectedErrorLogLoading ? (
