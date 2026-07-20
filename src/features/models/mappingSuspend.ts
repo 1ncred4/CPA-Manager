@@ -126,6 +126,39 @@ export function clearSuspendedForAlias(apiBase: string, alias: string): void {
   if (changed) writeStore(apiBase, store);
 }
 
+/** 列出某个自定义名上当前仍挂起的目标（编辑页 tag 列表用） */
+export function listSuspendedForAlias(apiBase: string, alias: string): SuspendedMapping[] {
+  const aliasKey = toAliasKey(alias);
+  if (!aliasKey) return [];
+  return listAllSuspended(apiBase).filter((entry) => toAliasKey(entry.alias) === aliasKey);
+}
+
+/**
+ * 删除「某 alias → 某 target」的一条挂起记录。
+ * 编辑页从 tag 列表移除挂起目标时调用，避免仅灰标残留、无法清理。
+ */
+export function removeSuspendedMapping(
+  apiBase: string,
+  alias: string,
+  target: MappingTargetRef
+): boolean {
+  const aliasKey = toAliasKey(alias);
+  if (!aliasKey) return false;
+  const identity = suspendedMappingIdentity({ alias, target });
+  const store = readStore(apiBase);
+  let changed = false;
+  Object.keys(store.byTarget).forEach((targetKey) => {
+    const prev = store.byTarget[targetKey] ?? [];
+    const next = prev.filter((entry) => suspendedMappingIdentity(entry) !== identity);
+    if (next.length === prev.length) return;
+    changed = true;
+    if (next.length) store.byTarget[targetKey] = next;
+    else delete store.byTarget[targetKey];
+  });
+  if (changed) writeStore(apiBase, store);
+  return changed;
+}
+
 export function loadSuspendedForTarget(
   apiBase: string,
   targetKey: string

@@ -37,6 +37,14 @@ import {
   unclaimManualMapping,
 } from './mappingClaims';
 import {
+  clearSuspendedForAlias,
+  listSuspendedForAlias,
+  mergeSuspendedForTarget,
+  type SuspendedMapping,
+} from './mappingSuspend';
+import {
+  accessEnabledKey,
+  accessRowToTargetRef,
   applyApiKeyModelAliasChanges,
   applyOauthAliasTargetChanges,
   assembleManualAndAutoMappingRows,
@@ -60,6 +68,16 @@ import { updateApiKeyModels } from './updateApiKeyModels';
 import styles from './ModelAliasEdit.module.scss';
 
 type LocationState = { fromModels?: boolean } | null;
+
+/** 编辑页 tag 展示元数据：覆盖启用 / 禁用（仍映射）目标 */
+type TargetChipMeta = {
+  key: string;
+  ref: MappingTargetRef;
+  displayName: string;
+  providerLabel: string;
+  iconSrc: string | null;
+  currentlyEnabled: boolean;
+};
 
 export function ModelAliasEditPage() {
   const { t } = useTranslation();
@@ -86,9 +104,14 @@ export function ModelAliasEditPage() {
   const [existingAliasKeys, setExistingAliasKeys] = useState<string[]>([]);
   const [baselineAlias, setBaselineAlias] = useState(aliasFromParams);
   const [baselineTargets, setBaselineTargets] = useState<MappingTargetRef[]>([]);
+  /** 目标展示信息（含已禁用但仍映射的模型），供 tag 列表用 */
+  const [targetChipMeta, setTargetChipMeta] = useState<Map<string, TargetChipMeta>>(() => new Map());
 
   const [alias, setAlias] = useState(aliasFromParams);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  /** 编辑页本地挂起目标（模型禁用时剪枝），可在 tag 列表中删除 */
+  const [suspendedTargets, setSuspendedTargets] = useState<SuspendedMapping[]>([]);
+  const [baselineSuspendedKeys, setBaselineSuspendedKeys] = useState<string[]>([]);
   const [pickerSearch, setPickerSearch] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -121,13 +144,30 @@ export function ModelAliasEditPage() {
         );
         return;
       }
-      // Keep baseline targets that are no longer in enabled options (disabled but still mapped)
+      // 已禁用但仍选中：优先用 chip meta / baseline 的 ref
+      const meta = targetChipMeta.get(key);
+      if (meta) {
+        result.push(meta.ref);
+        return;
+      }
       const baseline = baselineTargets.find((t) => mappingTargetKey(t) === key);
       if (baseline) result.push(baseline);
     });
     return result;
-  }, [baselineTargets, optionByKey, selectedKeys]);
+  }, [baselineTargets, optionByKey, selectedKeys, targetChipMeta]);
 
+  const suspendedSignature = useMemo(
+    () =>
+      suspendedTargets
+        .map((entry) => `${toAliasKey(entry.alias)}|${mappingTargetKey(entry.target)}`)
+        .sort()
+        .join('\n'),
+    [suspendedTargets]
+  );
+  const baselineSuspendedSignature = useMemo(
+    () => [...baselineSuspendedKeys].sort().join('\n'),
+    [baselineSuspendedKeys]
+  );
   const baselineSignature = useMemo(
     () => getMappingDraftSignature(baselineAlias, baselineTargets),
     [baselineAlias, baselineTargets]
@@ -136,7 +176,8 @@ export function ModelAliasEditPage() {
     () => getMappingDraftSignature(alias, selectedTargets),
     [alias, selectedTargets]
   );
-  const isDirty = baselineSignature !== currentSignature;
+  const isDirty =
+    baselineSignature !== currentSignature || suspendedSignature !== baselineSuspendedSignature;
 
   const unsavedChangesDialog = useMemo(
     () => ({
@@ -267,6 +308,22 @@ export function ModelAliasEditPage() {
       const options = buildEnabledMappingOptions(accessRows);
       setEnabledOptions(options);
 
+      // access 全量元数据（含已禁用），供 tag 展示禁用但仍映射的目标
+      const chipMeta = new Map<string, TargetChipMeta>();
+      accessRows.forEach((row) => {
+        const ref = accessRowToTargetRef(row);
+        if (!ref) return;
+        const key = mappingTargetKey(ref);
+        chipMeta.set(key, {
+          key,
+          ref,
+          displayName: row.displayName || ref.modelId,
+          providerLabel: row.providerLabel,
+          iconSrc: row.iconSrc ?? null,
+          currentlyEnabled: row.enabled,
+        });
+      });
+
       const enabledKeySet = new Set(accessRows.filter((r) => r.enabled).map((r) => r.key));
       const configured = buildFederatedMappingRows({
         modelAlias: nextAlias,
@@ -281,6 +338,13 @@ export function ModelAliasEditPage() {
             });
             const entryLabel = resource.name ?? resource.identifier;
             return entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel;
+          },
+        },
+        icons: {
+          oauth: (channel) => getAuthFileIcon(channel, resolvedTheme),
+          apiKey: (resource) => {
+            const logo = PROVIDER_LOGOS[resource.brand];
+            return resolvedTheme === 'dark' && logo?.darkSrc ? logo.darkSrc : (logo?.src ?? null);
           },
         },
       });
@@ -298,7 +362,10 @@ export function ModelAliasEditPage() {
       if (aliasFromParams) {
         const match = federated.find((row) => row.aliasKey === toAliasKey(aliasFromParams));
         const resolvedAlias = match?.alias ?? aliasFromParams;
-        const targets: MappingTargetRef[] = (match?.targets ?? []).map((target) =>
+        // 活跃目标不含挂起项（挂起仅存 localStorage，后端已剪枝）
+        // 但包含 currentlyEnabled=false 的「已禁用但仍映射」目标，须出现在 tag 列表
+        const liveTargets = (match?.targets ?? []).filter((target) => !target.suspended);
+        const targets: MappingTargetRef[] = liveTargets.map((target) =>
           target.source === 'oauth'
             ? { source: 'oauth', channel: target.channel, modelId: target.modelId }
             : {
@@ -308,14 +375,56 @@ export function ModelAliasEditPage() {
                 modelId: target.modelId,
               }
         );
+        // 用联邦行补齐禁用目标的展示信息（accessRows 若已无该模型则仍可显示）
+        liveTargets.forEach((target) => {
+          const key = mappingTargetKey(target);
+          if (chipMeta.has(key)) {
+            // access 有该行时以 access 为准（enabled 更准），仅补全缺失
+            const existing = chipMeta.get(key)!;
+            chipMeta.set(key, {
+              ...existing,
+              displayName: existing.displayName || target.displayName || target.modelId,
+              providerLabel: existing.providerLabel || target.providerLabel,
+              iconSrc: existing.iconSrc ?? target.iconSrc ?? null,
+              currentlyEnabled: target.currentlyEnabled,
+            });
+            return;
+          }
+          chipMeta.set(key, {
+            key,
+            ref:
+              target.source === 'oauth'
+                ? { source: 'oauth', channel: target.channel, modelId: target.modelId }
+                : {
+                    source: 'apiKey',
+                    resourceId: target.resourceId,
+                    brand: target.brand,
+                    modelId: target.modelId,
+                  },
+            displayName: target.displayName || target.modelId,
+            providerLabel: target.providerLabel,
+            iconSrc: target.iconSrc ?? null,
+            currentlyEnabled: target.currentlyEnabled,
+          });
+        });
+
+        const suspended = listSuspendedForAlias(apiBase, resolvedAlias);
+        setTargetChipMeta(chipMeta);
         setAlias(resolvedAlias);
         setBaselineAlias(resolvedAlias);
         setBaselineTargets(targets);
         setSelectedKeys(new Set(targets.map(mappingTargetKey)));
+        setSuspendedTargets(suspended);
+        setBaselineSuspendedKeys(
+          suspended.map((entry) => `${toAliasKey(entry.alias)}|${mappingTargetKey(entry.target)}`)
+        );
       } else {
+        setTargetChipMeta(chipMeta);
         setAlias('');
         setBaselineAlias('');
         setBaselineTargets([]);
+        setSuspendedTargets([]);
+        setBaselineSuspendedKeys([]);
         const preselected = new Set<string>();
         if (preselectFromParams) {
           const optionKeys = new Set(options.map((opt) => mappingTargetKey(opt)));
@@ -403,6 +512,11 @@ export function ModelAliasEditPage() {
     });
   };
 
+  /** 从编辑页 tag 列表移除一条挂起目标（仅本地状态，保存时再写 localStorage） */
+  const removeSuspended = (key: string) => {
+    setSuspendedTargets((prev) => prev.filter((entry) => mappingTargetKey(entry.target) !== key));
+  };
+
   const filteredOptions = useMemo(() => {
     const q = pickerSearch.trim().toLowerCase();
     if (!q) return enabledOptions;
@@ -426,8 +540,9 @@ export function ModelAliasEditPage() {
   }, [filteredOptions]);
 
   const selectedChips = useMemo(() => {
-    return Array.from(selectedKeys).map((key) => {
+    const active = Array.from(selectedKeys).map((key) => {
       const opt = optionByKey.get(key);
+      const meta = targetChipMeta.get(key);
       if (opt) {
         return {
           key,
@@ -435,21 +550,116 @@ export function ModelAliasEditPage() {
           providerLabel: opt.providerLabel,
           iconSrc: opt.iconSrc,
           disabled: false,
+          suspended: false,
+        };
+      }
+      // 已禁用但仍映射：用 access / 联邦行补齐的 meta 展示
+      if (meta) {
+        return {
+          key,
+          label: meta.displayName || meta.ref.modelId,
+          providerLabel: meta.providerLabel,
+          iconSrc: meta.iconSrc,
+          disabled: true,
+          suspended: false,
         };
       }
       const baseline = baselineTargets.find((t) => mappingTargetKey(t) === key);
+      if (baseline?.source === 'oauth') {
+        return {
+          key,
+          label: baseline.modelId,
+          providerLabel: getTypeLabel(t, baseline.channel),
+          iconSrc: getAuthFileIcon(baseline.channel, resolvedTheme) as string | null,
+          disabled: true,
+          suspended: false,
+        };
+      }
+      if (baseline?.source === 'apiKey') {
+        const brandLabel = t(`providersPage.providerNames.${baseline.brand}`, {
+          defaultValue: baseline.brand,
+        });
+        const resource = resources.find((r) => r.id === baseline.resourceId);
+        const entryLabel = resource?.name ?? resource?.identifier;
+        const logo = PROVIDER_LOGOS[baseline.brand];
+        return {
+          key,
+          label: baseline.modelId,
+          providerLabel: entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel,
+          iconSrc:
+            resolvedTheme === 'dark' && logo?.darkSrc ? logo.darkSrc : (logo?.src ?? null),
+          disabled: true,
+          suspended: false,
+        };
+      }
       return {
         key,
-        label: baseline?.modelId ?? key,
-        providerLabel:
-          baseline?.source === 'oauth'
-            ? getTypeLabel(t, baseline.channel)
-            : t('modelsPage.mapping.disabledTarget', { defaultValue: '已禁用目标' }),
+        label: key,
+        providerLabel: t('modelsPage.mapping.disabledTarget', { defaultValue: '已禁用目标' }),
         iconSrc: null as string | null,
         disabled: true,
+        suspended: false,
       };
     });
-  }, [baselineTargets, optionByKey, selectedKeys, t]);
+
+    // 活跃 selected 已占用的 key 不再重复展示挂起 tag
+    const activeKeys = new Set(active.map((chip) => chip.key));
+    const suspendedChips = suspendedTargets
+      .filter((entry) => !activeKeys.has(mappingTargetKey(entry.target)))
+      .map((entry) => {
+        const key = mappingTargetKey(entry.target);
+        const opt = optionByKey.get(key);
+        const meta = targetChipMeta.get(key);
+        if (entry.target.source === 'oauth') {
+          return {
+            key,
+            label: opt?.displayName || meta?.displayName || entry.target.modelId,
+            providerLabel:
+              opt?.providerLabel || meta?.providerLabel || getTypeLabel(t, entry.target.channel),
+            iconSrc:
+              opt?.iconSrc ??
+              meta?.iconSrc ??
+              (getAuthFileIcon(entry.target.channel, resolvedTheme) as string | null),
+            disabled: true,
+            suspended: true,
+          };
+        }
+        const apiTarget = entry.target;
+        const brandLabel = t(`providersPage.providerNames.${apiTarget.brand}`, {
+          defaultValue: apiTarget.brand,
+        });
+        const resource = resources.find((r) => r.id === apiTarget.resourceId);
+        const entryLabel = resource?.name ?? resource?.identifier;
+        const providerLabel =
+          opt?.providerLabel ||
+          meta?.providerLabel ||
+          (entryLabel ? `${brandLabel} · ${entryLabel}` : brandLabel);
+        const logo = PROVIDER_LOGOS[apiTarget.brand];
+        const iconSrc =
+          opt?.iconSrc ??
+          meta?.iconSrc ??
+          (resolvedTheme === 'dark' && logo?.darkSrc ? logo.darkSrc : (logo?.src ?? null));
+        return {
+          key,
+          label: opt?.displayName || meta?.displayName || apiTarget.modelId,
+          providerLabel,
+          iconSrc,
+          disabled: true,
+          suspended: true,
+        };
+      });
+
+    return [...active, ...suspendedChips];
+  }, [
+    baselineTargets,
+    optionByKey,
+    resources,
+    resolvedTheme,
+    selectedKeys,
+    suspendedTargets,
+    t,
+    targetChipMeta,
+  ]);
 
   const handleSave = useCallback(async () => {
     const aliasLiteral = alias.trim();
@@ -471,8 +681,27 @@ export function ModelAliasEditPage() {
       selectedTargets.length > 0 &&
       persistableSelected.length === 0;
 
+    const syncSuspendedTags = (finalAliasName: string) => {
+      if (isEditing && baselineAlias) {
+        clearSuspendedForAlias(apiBase, baselineAlias);
+      }
+      if (finalAliasName && toAliasKey(finalAliasName) !== toAliasKey(baselineAlias || '')) {
+        clearSuspendedForAlias(apiBase, finalAliasName);
+      }
+      // 写回仍保留的挂起 tag（alias 可能已改名）；活跃与挂起都空时 clear 后不再 merge
+      if (suspendedTargets.length > 0 && finalAliasName) {
+        suspendedTargets.forEach((entry) => {
+          mergeSuspendedForTarget(apiBase, accessEnabledKey(entry.target), [
+            { ...entry, alias: finalAliasName },
+          ]);
+        });
+      }
+    };
+
     if (pureIdentity) {
-      claimManualMapping(apiBase, aliasLiteral || baselineAlias);
+      const finalAlias = aliasLiteral || baselineAlias;
+      claimManualMapping(apiBase, finalAlias);
+      syncSuspendedTags(finalAlias);
       showNotification(
         t('modelsPage.mapping.saveSuccessPromoted', {
           defaultValue: '已转为手动映射渠道（同名目标无需改写别名）',
@@ -484,8 +713,47 @@ export function ModelAliasEditPage() {
       return;
     }
 
-    // 编辑时清空全部勾选：取消认领 + 清理后端配置
-    if (selectedTargets.length === 0) {
+    // 仅挂起目标仍算「有映射」：只同步 localStorage，不走后端清空
+    if (isEditing && selectedTargets.length === 0 && suspendedTargets.length > 0) {
+      const finalAlias = aliasLiteral || baselineAlias;
+      if (!finalAlias.trim()) {
+        showNotification(
+          validationMessage('alias_required') ??
+            t('modelsPage.mapping.aliasRequired', { defaultValue: '请填写自定义模型名。' }),
+          'error'
+        );
+        return;
+      }
+      setSaving(true);
+      try {
+        // 挂起仍在 → 保持手动认领，避免灰标行掉回自动
+        claimManualMapping(apiBase, finalAlias);
+        // 后端侧：若原本有可持久化目标，须清空（禁用剪枝后后端本已无配置；重命名时清旧名）
+        if (persistableBaseline.length > 0 || toAliasKey(baselineAlias) !== toAliasKey(finalAlias)) {
+          // fall through to backend clear + suspended rewrite below with empty next plan
+        } else {
+          syncSuspendedTags(finalAlias);
+          showNotification(
+            t('modelsPage.mapping.saveSuccess', { defaultValue: '映射已保存' }),
+            'success'
+          );
+          allowNextNavigation();
+          handleBack();
+          return;
+        }
+      } catch (err: unknown) {
+        showNotification(
+          `${t('modelsPage.mapping.saveFailed', { defaultValue: '保存映射失败' })}: ${getErrorMessage(err)}`,
+          'error'
+        );
+        setSaving(false);
+        return;
+      }
+      // continue into write path with empty selected (clear old backend bindings)
+    }
+
+    // 编辑时清空全部勾选（含挂起也删光）：取消认领 + 清理后端配置
+    if (selectedTargets.length === 0 && suspendedTargets.length === 0) {
       if (!isEditing) {
         showNotification(
           validationMessage('no_targets') ??
@@ -504,8 +772,16 @@ export function ModelAliasEditPage() {
       editingAliasKey: isEditing ? toAliasKey(baselineAlias) : null,
     });
 
-    // clearingConfigured 时 selected 可能为空，validate 会报 no_targets — 允许通过
-    if (error && !(clearingConfigured && (error === 'no_targets' || error === 'identity_only'))) {
+    // 编辑时空活跃目标：validate 会报 no_targets — 允许通过
+    const allowEmptyTargets =
+      isEditing &&
+      selectedTargets.length === 0 &&
+      (error === 'no_targets' || error === 'identity_only');
+    if (
+      error &&
+      !(clearingConfigured && (error === 'no_targets' || error === 'identity_only')) &&
+      !allowEmptyTargets
+    ) {
       showNotification(validationMessage(error) ?? error, 'error');
       return;
     }
@@ -611,19 +887,24 @@ export function ModelAliasEditPage() {
         await updateApiKeyModels(resource, nextModels);
       }
 
-      if (selectedTargets.length === 0) {
-        // 清空全部目标 = 删除手动渠道 → 取消认领，模型回自动映射
-        unclaimManualMapping(apiBase, aliasLiteral || baselineAlias);
+      const finalAlias = aliasLiteral || baselineAlias;
+
+      if (selectedTargets.length === 0 && suspendedTargets.length === 0) {
+        // 活跃 + 挂起全部清空 = 删除手动渠道 → 取消认领，模型回自动映射
+        unclaimManualMapping(apiBase, finalAlias);
       } else {
-        // 任意成功保存都认领为手动（含跨名 + 同名混合）
-        claimManualMapping(apiBase, aliasLiteral || baselineAlias);
+        // 任意成功保存都认领为手动（含跨名 + 同名混合 + 仅挂起）
+        claimManualMapping(apiBase, finalAlias);
       }
+
+      syncSuspendedTags(finalAlias);
 
       const skippedIdentity =
         selectedTargets.length - persistableSelected.length > 0 &&
         persistableSelected.length > 0;
+      const fullyDeleted = selectedTargets.length === 0 && suspendedTargets.length === 0;
       showNotification(
-        clearingConfigured || selectedTargets.length === 0
+        fullyDeleted
           ? t('modelsPage.mapping.deleteSuccess', {
               defaultValue: '手动映射已删除，同名模型已回到自动映射',
             })
@@ -659,6 +940,7 @@ export function ModelAliasEditPage() {
     resources,
     selectedTargets,
     showNotification,
+    suspendedTargets,
     t,
     validationMessage,
   ]);
@@ -758,15 +1040,26 @@ export function ModelAliasEditPage() {
                 <div className={styles.tagList}>
                   {selectedChips.map((chip) => (
                     <span
-                      key={chip.key}
-                      className={`${styles.selectedTag} ${chip.disabled ? styles.selectedTagDisabled : ''}`}
+                      key={`${chip.suspended ? 'suspended' : 'active'}:${chip.key}`}
+                      className={`${styles.selectedTag} ${
+                        chip.suspended
+                          ? styles.selectedTagSuspended
+                          : chip.disabled
+                            ? styles.selectedTagDisabled
+                            : ''
+                      }`}
                       title={
-                        chip.disabled
-                          ? t('modelsPage.mapping.targetDisabledHint', {
-                              defaultValue: '{{label}}（当前已禁用）',
+                        chip.suspended
+                          ? t('modelsPage.mapping.targetSuspendedHint', {
+                              defaultValue: '{{label}}（已挂起：模型禁用时摘除，启用后恢复）',
                               label: `${chip.providerLabel} · ${chip.label}`,
                             })
-                          : `${chip.providerLabel} · ${chip.label}`
+                          : chip.disabled
+                            ? t('modelsPage.mapping.targetDisabledHint', {
+                                defaultValue: '{{label}}（当前已禁用）',
+                                label: `${chip.providerLabel} · ${chip.label}`,
+                              })
+                            : `${chip.providerLabel} · ${chip.label}`
                       }
                     >
                       {chip.iconSrc ? (
@@ -774,10 +1067,21 @@ export function ModelAliasEditPage() {
                       ) : null}
                       <span className={styles.tagText}>{chip.label}</span>
                       <span className={styles.tagProvider}>{chip.providerLabel}</span>
+                      {chip.suspended ? (
+                        <span className={styles.tagBadge}>
+                          {t('modelsPage.mapping.suspendedBadge', { defaultValue: '挂起' })}
+                        </span>
+                      ) : chip.disabled ? (
+                        <span className={styles.tagBadge}>
+                          {t('modelsPage.mapping.disabledBadge', { defaultValue: '禁用' })}
+                        </span>
+                      ) : null}
                       <button
                         type="button"
                         className={styles.tagRemove}
-                        onClick={() => removeSelected(chip.key)}
+                        onClick={() =>
+                          chip.suspended ? removeSuspended(chip.key) : removeSelected(chip.key)
+                        }
                         disabled={disableControls || saving}
                         aria-label={t('common.delete')}
                       >

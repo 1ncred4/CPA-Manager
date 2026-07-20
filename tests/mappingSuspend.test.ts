@@ -4,11 +4,13 @@ import {
   clearSuspendedForAlias,
   collectMappingsForTarget,
   listAllSuspended,
+  listSuspendedForAlias,
   loadSuspendedForTarget,
   mergeSuspendedForTarget,
   mergeSuspendedIntoFederatedRows,
   pruneApiKeyModelsForModel,
   pruneOauthEntriesForModel,
+  removeSuspendedMapping,
   restoreApiKeyModels,
   restoreOauthEntries,
   suspendedMappingIdentity,
@@ -284,5 +286,59 @@ describe('collect / prune / restore', () => {
     const left = listAllSuspended(API);
     expect(left).toHaveLength(1);
     expect(left[0].alias).toBe('other');
+  });
+
+  test('listSuspendedForAlias filters by alias key', () => {
+    installLocalStorage();
+    __replaceSuspendedStoreForTests(API, {
+      'oauth:claude:kimi-k3': [
+        {
+          alias: 'Claude-Opus-4-8',
+          target: { source: 'oauth', channel: 'claude', modelId: 'kimi-k3' },
+        },
+        {
+          alias: 'other',
+          target: { source: 'oauth', channel: 'claude', modelId: 'kimi-k3' },
+        },
+      ],
+      'apiKey:xai:0:k:grok': [
+        {
+          alias: 'claude-opus-4-8',
+          target: {
+            source: 'apiKey',
+            resourceId: 'xai:0:k',
+            brand: 'xai',
+            modelId: 'grok',
+          },
+        },
+      ],
+    });
+    const listed = listSuspendedForAlias(API, 'claude-opus-4-8');
+    expect(listed).toHaveLength(2);
+    expect(listed.every((e) => e.alias.toLowerCase() === 'claude-opus-4-8')).toBe(true);
+  });
+
+  test('removeSuspendedMapping drops one alias→target binding', () => {
+    installLocalStorage();
+    __replaceSuspendedStoreForTests(API, {
+      'oauth:claude:kimi-k3': [
+        {
+          alias: 'claude-opus-4-8',
+          target: { source: 'oauth', channel: 'claude', modelId: 'kimi-k3' },
+        },
+        {
+          alias: 'other',
+          target: { source: 'oauth', channel: 'claude', modelId: 'kimi-k3' },
+        },
+      ],
+    });
+    const removed = removeSuspendedMapping(API, 'claude-opus-4-8', {
+      source: 'oauth',
+      channel: 'claude',
+      modelId: 'kimi-k3',
+    });
+    expect(removed).toBe(true);
+    expect(listSuspendedForAlias(API, 'claude-opus-4-8')).toHaveLength(0);
+    expect(listSuspendedForAlias(API, 'other')).toHaveLength(1);
   });
 });
