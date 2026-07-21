@@ -3,6 +3,7 @@
 import type { ModelAlias, OAuthModelAliasEntry } from '@/types';
 import type { ProviderBrand, ProviderResource } from '@/features/providers/types';
 import type { AuthFileModelItem } from '@/features/authFiles/constants';
+import { isModelExcluded } from '@/features/authFiles/constants';
 import { normalizeProviderKey } from '@/features/authFiles/constants';
 import {
   accessEnabledKey,
@@ -233,6 +234,13 @@ type MappingCandidate = {
   forceMapping?: boolean;
 };
 
+function getApiKeyExcludedModels(resource: ProviderResource): string[] {
+  const raw = resource.raw as { excludedModels?: unknown } | null | undefined;
+  return Array.isArray(raw?.excludedModels)
+    ? raw.excludedModels.map((model) => String(model ?? '').trim()).filter(Boolean)
+    : [];
+}
+
 function buildMappingState(
   sources: ModelManagementSources,
   mirrors: ModelManagementMirrors,
@@ -241,6 +249,18 @@ function buildMappingState(
   const candidates: MappingCandidate[] = [];
   const modelDisabledKeys = new Set(mirrors.modelDisabled.keys());
   const explicitKeys = mirrors.explicitIdentityKeys;
+  const isGloballyDisabled = (target: MappingTargetRef): boolean => {
+    if (modelDisabledKeys.has(accessEnabledKey(target))) return true;
+    if (target.source === 'oauth') {
+      return isModelExcluded(target.modelId, target.channel, sources.oauthExcludedMap);
+    }
+    const resource = sources.resources.find((item) => item.id === target.resourceId);
+    if (!resource) return false;
+    const excludedModels = getApiKeyExcludedModels(resource);
+    return excludedModels.length > 0
+      ? isModelExcluded(target.modelId, resource.brand, { [resource.brand]: excludedModels })
+      : false;
+  };
   const push = (candidate: MappingCandidate) => {
     if (!candidate.alias || !candidate.target.modelId) return;
     candidates.push(candidate);
@@ -258,6 +278,7 @@ function buildMappingState(
       list.push(entry);
       configuredByModel.set(lower(modelId), list);
       const ref: MappingTargetRef = { source: 'oauth', channel, modelId };
+      const globallyDisabled = isGloballyDisabled(ref);
       push({
         alias: String(entry.alias ?? modelId).trim() || modelId,
         target: ref,
@@ -265,7 +286,7 @@ function buildMappingState(
         providerLabel: ctx.oauthProviderLabel(channel),
         iconSrc: ctx.oauthIcon(channel),
         suspended: false,
-        disabledReason: modelDisabledKeys.has(accessEnabledKey(ref)) ? 'model' : undefined,
+        disabledReason: globallyDisabled ? 'model' : undefined,
         aliasOrigin:
           toAliasKey(String(entry.alias ?? modelId)) === lower(modelId) &&
           !explicitKeys.has(accessEnabledKey(ref))
@@ -279,6 +300,7 @@ function buildMappingState(
       const modelId = String(model.id ?? '').trim();
       if (!modelId || configuredByModel.has(lower(modelId))) return;
       const ref: MappingTargetRef = { source: 'oauth', channel, modelId };
+      const globallyDisabled = isGloballyDisabled(ref);
       push({
         alias: modelId,
         target: ref,
@@ -286,7 +308,7 @@ function buildMappingState(
         providerLabel: ctx.oauthProviderLabel(channel),
         iconSrc: ctx.oauthIcon(channel),
         suspended: false,
-        disabledReason: modelDisabledKeys.has(accessEnabledKey(ref)) ? 'model' : undefined,
+        disabledReason: globallyDisabled ? 'model' : undefined,
         aliasOrigin: explicitKeys.has(accessEnabledKey(ref)) ? 'explicit' : 'auto',
       });
     });
@@ -306,7 +328,7 @@ function buildMappingState(
         brand: resource.brand,
         modelId,
       };
-      if (modelDisabledKeys.has(accessEnabledKey(ref))) return;
+      const globallyDisabled = isGloballyDisabled(ref);
       push({
         alias,
         target: ref,
@@ -314,7 +336,7 @@ function buildMappingState(
         providerLabel,
         iconSrc,
         suspended: false,
-        disabledReason: modelDisabledKeys.has(accessEnabledKey(ref)) ? 'model' : undefined,
+        disabledReason: globallyDisabled ? 'model' : undefined,
         aliasOrigin:
           toAliasKey(alias) === lower(modelId) && !explicitKeys.has(accessEnabledKey(ref))
             ? 'auto'
@@ -389,7 +411,7 @@ function buildMappingState(
   // identity alias) so they remain editable and recoverable.
   const visibleCandidates = candidates.filter(
     (candidate) =>
-      !modelDisabledKeys.has(accessEnabledKey(candidate.target)) ||
+      !isGloballyDisabled(candidate.target) ||
       candidate.aliasOrigin !== 'auto'
   );
 

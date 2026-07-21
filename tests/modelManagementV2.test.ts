@@ -119,4 +119,22 @@ describe('model-management v2 projection', () => {
     );
     expect(mapped.mapping.byAliasKey.get('chat')?.targets[0].disabledReason).toBe('model');
   });
+
+  test('hides OAuth excluded models that have no explicit alias mapping', () => {
+    const sources = {
+      oauthModels: { codex: [{ id: 'gpt-5.4' }] },
+      oauthAliasMap: {},
+      oauthExcludedMap: { codex: ['gpt-5.4'] },
+      resources: [],
+    };
+    const hidden = buildStateFromSources(sources, emptyMirrors(), ctx);
+    expect(hidden.mapping.byAliasKey.has('gpt-5.4')).toBe(false);
+
+    const mapped = buildStateFromSources(
+      { ...sources, oauthAliasMap: { codex: [{ name: 'gpt-5.4', alias: 'fast' }] } },
+      emptyMirrors(),
+      ctx
+    );
+    expect(mapped.mapping.byAliasKey.get('fast')?.targets[0].disabledReason).toBe('model');
+  });
 });
