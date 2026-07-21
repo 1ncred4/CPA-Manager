@@ -3,8 +3,35 @@
  */
 
 import { providersApi } from '@/services/api';
+import { withDisableAllModelsRule } from '@/components/providers/utils';
 import type { GeminiKeyConfig, ModelAlias, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import type { ProviderResource } from '@/features/providers/types';
+
+/**
+ * Build the provider payload used when a model mapping removes entries.
+ *
+ * CLIProxyAPI treats an omitted/empty Claude `models` list as "use the full
+ * static Claude catalog".  When the last Claude mapping is disabled, that
+ * fallback would resurrect every default Claude model.  Persist the backend's
+ * explicit all-model exclusion instead, while still omitting `models` itself.
+ */
+export function buildApiKeyModelsUpdate(
+  resource: ProviderResource,
+  nextModels: ModelAlias[]
+): GeminiKeyConfig | ProviderKeyConfig {
+  const current = resource.raw as GeminiKeyConfig | ProviderKeyConfig;
+  const models = nextModels.length ? nextModels : undefined;
+
+  if (resource.brand === 'claude' && !nextModels.length) {
+    return {
+      ...current,
+      models,
+      excludedModels: withDisableAllModelsRule(current.excludedModels),
+    };
+  }
+
+  return { ...current, models };
+}
 
 export async function updateApiKeyModels(
   resource: ProviderResource,
@@ -23,8 +50,7 @@ export async function updateApiKeyModels(
     return;
   }
 
-  const current = resource.raw as GeminiKeyConfig | ProviderKeyConfig;
-  const next = { ...current, models };
+  const next = buildApiKeyModelsUpdate(resource, nextModels);
 
   if (selector.brand === 'gemini') {
     await providersApi.updateGeminiKey(selector.apiKey, selector.baseUrl, next as GeminiKeyConfig);
