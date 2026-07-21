@@ -67,7 +67,47 @@ describe('v2 model access planner', () => {
     const item = resource('gemini:0', 'gemini', { models: [{ name: 'a', alias: 'chat' }], excludedModels: [] });
     const disabledOps = planAliasSave({ state: state({ resources: [item], mapping }), draft: { alias: 'chat', previousAliasKey: 'chat', baselineAlias: 'chat', isEditing: true, selectedTargets: [], disabledTargets: [{ alias: 'chat', target: ref }] } }).ops;
     expect(disabledOps.some((op) => op.kind === 'mappingDisabledMerge')).toBe(true);
-    expect(disabledOps.some((op) => op.kind === 'apiKeyModelsPut')).toBe(true);
+    const apiKeyPatch = disabledOps.find((op) => op.kind === 'apiKeyModelsPut');
+    expect(apiKeyPatch).toMatchObject({ models: [] });
+
+    const oauthTarget = oauthRef('claude', 'a');
+    const oauthMapping = {
+      byAliasKey: new Map([
+        [
+          'chat',
+          {
+            alias: 'chat',
+            aliasKey: 'chat',
+            targets: [
+              {
+                ...oauthTarget,
+                displayName: 'a',
+                providerLabel: 'Claude',
+                iconSrc: null,
+                suspended: false,
+              },
+            ],
+          },
+        ],
+      ]),
+    };
+    const oauthDisabledOps = planAliasSave({
+      state: state({
+        oauthAliasMap: { claude: [{ name: 'a', alias: 'chat' }] },
+        mapping: oauthMapping,
+      }),
+      draft: {
+        alias: 'chat',
+        previousAliasKey: 'chat',
+        baselineAlias: 'chat',
+        isEditing: true,
+        selectedTargets: [],
+        disabledTargets: [{ alias: 'chat', target: oauthTarget }],
+      },
+    }).ops;
+    const oauthPatch = oauthDisabledOps.find((op) => op.kind === 'oauthAliasPatch');
+    expect(oauthPatch).toMatchObject({ entries: expect.not.arrayContaining([{ name: 'a' }]) });
+
     const restoreOps = planAliasSave({ state: state({ resources: [item], mapping: { byAliasKey: new Map([['chat', { alias: 'chat', aliasKey: 'chat', targets: [{ ...ref, displayName: 'a', providerLabel: 'Gemini', iconSrc: null, suspended: true, disabledReason: 'mapping' }] }]]) } }), draft: { alias: 'chat', previousAliasKey: 'chat', baselineAlias: 'chat', isEditing: true, selectedTargets: [ref], disabledTargets: [] } }).ops;
     expect(restoreOps.some((op) => op.kind === 'mappingDisabledTake')).toBe(true);
   });

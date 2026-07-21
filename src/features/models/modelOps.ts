@@ -167,7 +167,8 @@ function normalizeOauthIdentityEntries(
   entries: OAuthModelAliasEntry[],
   modelIds: string[],
   explicitIdentityKeys: Set<string>,
-  channel: string
+  channel: string,
+  disabledKeys: Set<string> = new Set()
 ): OAuthModelAliasEntry[] {
   const normalized = entries
     .map((entry) => ({
@@ -184,15 +185,19 @@ function normalizeOauthIdentityEntries(
   const result = normalized.filter((entry) => {
     if (!same(entry.name, entry.alias)) return true;
     const key = accessEnabledKey({ source: 'oauth', channel, modelId: entry.name });
-    return explicitIdentityKeys.has(key) ||
-      !normalized.some((other) => same(other.name, entry.name) && !same(other.name, other.alias));
+    return (
+      explicitIdentityKeys.has(key) ||
+      (!disabledKeys.has(mappingTargetKey({ source: 'oauth', channel, modelId: entry.name })) &&
+        !normalized.some((other) => same(other.name, entry.name) && !same(other.name, other.alias)))
+    );
   });
   ids.forEach((modelId, modelKey) => {
     if (result.some((entry) => same(entry.name, modelId) && same(entry.alias, modelId))) return;
     const key = accessEnabledKey({ source: 'oauth', channel, modelId });
     if (
       explicitIdentityKeys.has(key) ||
-      !normalized.some((entry) => same(entry.name, modelKey) && !same(entry.name, entry.alias))
+      (!disabledKeys.has(mappingTargetKey({ source: 'oauth', channel, modelId })) &&
+        !normalized.some((entry) => same(entry.name, modelKey) && !same(entry.name, entry.alias)))
     ) {
       result.push({ name: modelId, alias: modelId });
     }
@@ -227,7 +232,8 @@ function upsertApiKeyBindings(
 function normalizeApiKeyIdentityEntries(
   models: ModelAlias[],
   resource: ProviderResource,
-  explicitIdentityKeys: Set<string>
+  explicitIdentityKeys: Set<string>,
+  disabledKeys: Set<string> = new Set()
 ): ModelAlias[] {
   const normalized = models
     .map((entry) => ({
@@ -249,8 +255,17 @@ function normalizeApiKeyIdentityEntries(
       brand: resource.brand,
       modelId: entry.name,
     });
-    return explicitIdentityKeys.has(key) ||
-      !normalized.some((other) => same(other.name, entry.name) && !same(other.name, other.alias));
+    return (
+      explicitIdentityKeys.has(key) ||
+      (!disabledKeys.has(
+        mappingTargetKey({
+          source: 'apiKey',
+          resourceId: resource.id,
+          brand: resource.brand,
+          modelId: entry.name,
+        })
+      ) && !normalized.some((other) => same(other.name, entry.name) && !same(other.name, other.alias)))
+    );
   });
   ids.forEach((modelId, modelKey) => {
     if (result.some((entry) => same(entry.name, modelId) && same(entry.alias, modelId))) return;
@@ -262,7 +277,12 @@ function normalizeApiKeyIdentityEntries(
     });
     if (
       explicitIdentityKeys.has(key) ||
-      !normalized.some((entry) => same(entry.name, modelKey) && !same(entry.name, entry.alias))
+      (!disabledKeys.has(mappingTargetKey({
+        source: 'apiKey',
+        resourceId: resource.id,
+        brand: resource.brand,
+        modelId,
+      })) && !normalized.some((entry) => same(entry.name, modelKey) && !same(entry.name, entry.alias)))
     ) {
       result.push({ name: modelId, alias: modelId });
     }
@@ -489,7 +509,13 @@ function planAliasBackendForSource(
       entries = removeAliases(entries, aliasNames);
       entries = upsertAliasBindings(entries, finalAlias, selectedBySource.get(sourceKey) ?? [], disabledKeys);
       const modelIds = state.catalogs.oauthModels[channel]?.map((model) => model.id) ?? [];
-      entries = normalizeOauthIdentityEntries(entries, modelIds, explicitIdentityKeys, channel);
+      entries = normalizeOauthIdentityEntries(
+        entries,
+        modelIds,
+        explicitIdentityKeys,
+        channel,
+        disabledKeys
+      );
       if (JSON.stringify(entries) !== JSON.stringify(state.oauthAliasMap[channel] ?? [])) {
         out.push({ kind: 'oauthAliasPatch', phase: 'backend', queueKey: channel, channel, entries });
       }
@@ -503,7 +529,7 @@ function planAliasBackendForSource(
       if (!resource) return;
       let models = readApiKeyModels(resource);
       models = upsertApiKeyBindings(models, finalAlias, selectedBySource.get(sourceKey) ?? [], disabledKeys);
-      models = normalizeApiKeyIdentityEntries(models, resource, explicitIdentityKeys);
+      models = normalizeApiKeyIdentityEntries(models, resource, explicitIdentityKeys, disabledKeys);
       if (JSON.stringify(models) !== JSON.stringify(readApiKeyModels(resource))) {
         out.push({ kind: 'apiKeyModelsPut', phase: 'backend', queueKey: resourceId, resourceId, brand: resource.brand, models });
       }
@@ -511,7 +537,7 @@ function planAliasBackendForSource(
     }
     let models = readApiKeyModels(resource);
     models = upsertApiKeyBindings(models, finalAlias, selectedBySource.get(sourceKey) ?? [], disabledKeys);
-    models = normalizeApiKeyIdentityEntries(models, resource, explicitIdentityKeys);
+    models = normalizeApiKeyIdentityEntries(models, resource, explicitIdentityKeys, disabledKeys);
     if (JSON.stringify(models) !== JSON.stringify(readApiKeyModels(resource))) {
       out.push({ kind: 'apiKeyModelsPut', phase: 'backend', queueKey: resourceId, resourceId, brand: resource.brand, models });
     }
