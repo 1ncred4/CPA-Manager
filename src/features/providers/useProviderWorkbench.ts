@@ -14,10 +14,8 @@ import {
   restoreModelToCatalog,
   takeSuspendedCatalog,
 } from '@/features/models/catalogSuspend';
-import {
-  pruneMappingsForDisabledTarget,
-  restoreMappingsForEnabledTarget,
-} from '@/features/models/syncMappingOnAccessToggle';
+import { useModelManagementStore } from '@/stores/useModelManagementStore';
+import type { ProviderFormDelta } from '@/features/models/modelOps';
 import type { GeminiKeyConfig, ModelAlias, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import {
   claudeToResource,
@@ -320,37 +318,6 @@ function collectModelAccessDeltas(input: {
   return { disabled, enabled };
 }
 
-async function syncMappingsAfterFormSave(input: {
-  apiBase: string;
-  brand: ProviderBrand;
-  resource: ProviderResource;
-  disabledModelIds: string[];
-  enabledModelIds: string[];
-  resources: ProviderResource[];
-}): Promise<void> {
-  const makeTarget = (modelId: string) => ({
-    source: 'apiKey' as const,
-    resourceId: input.resource.id,
-    brand: input.brand,
-    modelId,
-  });
-  // Sequential on purpose: prune/restore rewrite shared oauth-model-alias / models[] maps.
-  for (const modelId of input.disabledModelIds) {
-    await pruneMappingsForDisabledTarget({
-      apiBase: input.apiBase,
-      target: makeTarget(modelId),
-      resources: input.resources,
-    });
-  }
-  for (const modelId of input.enabledModelIds) {
-    await restoreMappingsForEnabledTarget({
-      apiBase: input.apiBase,
-      target: makeTarget(modelId),
-      resources: input.resources,
-    });
-  }
-}
-
 /**
  * Apply openaiCompatibility catalog suspend/restore around a form save.
  * Returns models[] that should be written (enabled + restored suspend entries).
@@ -433,6 +400,7 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
   const fetchConfig = useConfigStore((s) => s.fetchConfig);
   const updateConfigValue = useConfigStore((s) => s.updateConfigValue);
   const isCacheValid = useConfigStore((s) => s.isCacheValid);
+  const storeApplyProviderFormDeltas = useModelManagementStore((s) => s.applyProviderFormDeltas);
 
   const [isPending, setIsPending] = useState<boolean>(() => !isCacheValid());
   const [isFetching, setIsFetching] = useState<boolean>(false);
@@ -595,14 +563,13 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
         // OpenAI: prune mappings while models[] still contains disabled names.
         // Exclude brands can prune after save (models[] keep disabled names).
         if (brand === 'openaiCompatibility' && apiBase && deltas.disabled.length) {
-          await syncMappingsAfterFormSave({
-            apiBase,
-            brand,
-            resource,
-            disabledModelIds: deltas.disabled,
-            enabledModelIds: [],
-            resources: [resource],
-          });
+          await storeApplyProviderFormDeltas(
+            deltas.disabled.map((modelId) => ({
+              ref: { source: 'apiKey', resourceId: resource.id, brand, modelId },
+              nextEnabled: false,
+            })),
+            resource
+          );
         }
 
         if (brand === 'gemini' && selector.brand === 'gemini') {
@@ -662,20 +629,30 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
         // Sync mapping prune/restore after config is written.
         // OpenAI disables already pruned above; only restore those. Exclude brands do both here.
         if (apiBase && (deltas.disabled.length || deltas.enabled.length)) {
-          await syncMappingsAfterFormSave({
-            apiBase,
-            brand,
-            resource,
-            disabledModelIds: brand === 'openaiCompatibility' ? [] : deltas.disabled,
-            enabledModelIds: deltas.enabled,
-            resources: [resource],
-          });
+          const postDeltas: ProviderFormDelta[] = [];
+          if (brand !== 'openaiCompatibility') {
+            deltas.disabled.forEach((modelId) =>
+              postDeltas.push({
+                ref: { source: 'apiKey', resourceId: resource.id, brand, modelId },
+                nextEnabled: false,
+              })
+            );
+          }
+          deltas.enabled.forEach((modelId) =>
+            postDeltas.push({
+              ref: { source: 'apiKey', resourceId: resource.id, brand, modelId },
+              nextEnabled: true,
+            })
+          );
+          if (postDeltas.length) {
+            await storeApplyProviderFormDeltas(postDeltas, resource);
+          }
         }
       } finally {
         setMutating(false);
       }
     },
-    [refetch]
+    [refetch, storeApplyProviderFormDeltas]
   );
 
   const deleteProvider = useCallback(

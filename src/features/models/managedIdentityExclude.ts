@@ -161,11 +161,23 @@ export function applyManagedIdentityExcludeDisplayMask<
   T extends { key: string; source: string; enabled: boolean },
 >(rows: T[], apiBase: string): T[] {
   if (!apiBase || !rows.length) return rows;
-  const managed = listManagedIdentityExcludeKeys(apiBase);
-  if (!managed.size) return rows;
+  return applyManagedIdentityExcludeDisplayMaskWithKeys(
+    rows,
+    listManagedIdentityExcludeKeys(apiBase)
+  );
+}
+
+/**
+ * 纯函数版显示掩码：受管 excluded / catalog 挂起在 UI 上显示为 enabled。
+ * 供 store selector 使用（managedExcludeKeys 来自 store.mirrors，无需读 localStorage）。
+ */
+export function applyManagedIdentityExcludeDisplayMaskWithKeys<
+  T extends { key: string; enabled: boolean },
+>(rows: T[], managedKeys: Set<string>): T[] {
+  if (!managedKeys.size || !rows.length) return rows;
   return rows.map((row) => {
     if (row.enabled) return row;
-    if (!managed.has(row.key)) return row;
+    if (!managedKeys.has(row.key)) return row;
     return { ...row, enabled: true };
   });
 }
