@@ -83,4 +83,40 @@ describe('model-management v2 projection', () => {
     expect(chat?.targets[0].disabledReason).toBe('mapping');
     expect(other?.targets[0].disabledReason).toBeUndefined();
   });
+
+  test('hides globally disabled models that have no explicit alias mapping', () => {
+    const ref = { source: 'oauth' as const, channel: 'claude', modelId: 'native' };
+    const mirrors = emptyMirrors();
+    mirrors.modelDisabled.set(accessEnabledKey(ref), {
+      target: ref,
+      entries: [{ name: 'native', alias: 'native' }],
+    });
+    const hidden = buildStateFromSources(
+      {
+        oauthModels: { claude: [{ id: 'native' }] },
+        oauthAliasMap: {},
+        oauthExcludedMap: {},
+        resources: [],
+      },
+      mirrors,
+      ctx
+    );
+    expect(hidden.mapping.byAliasKey.has('native')).toBe(false);
+
+    mirrors.modelDisabled.set(accessEnabledKey(ref), {
+      target: ref,
+      entries: [{ name: 'native', alias: 'chat' }],
+    });
+    const mapped = buildStateFromSources(
+      {
+        oauthModels: { claude: [{ id: 'native' }] },
+        oauthAliasMap: {},
+        oauthExcludedMap: {},
+        resources: [],
+      },
+      mirrors,
+      ctx
+    );
+    expect(mapped.mapping.byAliasKey.get('chat')?.targets[0].disabledReason).toBe('model');
+  });
 });

@@ -383,15 +383,25 @@ function buildMappingState(
     });
   });
 
+  // A globally disabled model with only its automatic identity alias is not a
+  // user mapping and should stay out of the mapping list. Keep disabled
+  // targets that still have an explicit alias (including an explicitly marked
+  // identity alias) so they remain editable and recoverable.
+  const visibleCandidates = candidates.filter(
+    (candidate) =>
+      !modelDisabledKeys.has(accessEnabledKey(candidate.target)) ||
+      candidate.aliasOrigin !== 'auto'
+  );
+
   const hasNonIdentity = new Set<string>();
-  candidates.forEach((candidate) => {
+  visibleCandidates.forEach((candidate) => {
     if (toAliasKey(candidate.alias) !== lower(candidate.target.modelId)) {
       hasNonIdentity.add(mappingTargetKey(candidate.target));
     }
   });
 
   const byAliasKey = new Map<string, ModelMappingChannel>();
-  candidates.forEach((candidate) => {
+  visibleCandidates.forEach((candidate) => {
     if (
       candidate.aliasOrigin === 'auto' &&
       toAliasKey(candidate.alias) === lower(candidate.target.modelId) &&
