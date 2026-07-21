@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { planAccessToggle, planAliasSave, planProviderFormDeltas, type AliasDraft, type ModelOp } from '../src/features/models/modelOps';
+import { planAccessToggle, planAliasDelete, planAliasSave, planProviderFormDeltas, type AliasDraft, type ModelOp } from '../src/features/models/modelOps';
 import type {
   ModelAccessEntry,
   ModelManagementState,
@@ -372,6 +372,89 @@ describe('planAliasSave', () => {
       // bare entry restored -> original name re-exposed
       expect(modelPuts[0].models).toEqual([{ name: 'gpt-4o' }]);
     }
+  });
+
+  test('claude apikey: removing a channel-disabled (suspended) target from the alias keeps it excluded', () => {
+    const resource = mkResource('res', 'claude', {
+      models: [{ name: 'claude-x' }], // bare entry (alias pruned when channel-disabled)
+      excludedModels: ['claude-x'], // channel-disabled -> excluded
+    });
+    const { channel } = suspendedApiKeyTarget('my-claude', 'res', 'claude', 'claude-x');
+    const state = mkState({ resources: [resource], mappingChannels: [channel] });
+    const draft: AliasDraft = {
+      alias: 'my-claude',
+      previousAliasKey: 'my-claude',
+      baselineAlias: 'my-claude',
+      isEditing: true,
+      selectedTargets: [],
+      suspendedTargets: [], // user removed the suspended target
+    };
+    const { ops } = planAliasSave({ state, draft });
+
+    // Before fix: abandoned suspended target -> toClearExclude -> excludedModels drops 'claude-x'
+    // (bare callable entry). After fix: routed through suspendedTargets -> toDisable -> stays excluded.
+    const excludedPatches = opsOfKind(ops, 'apiKeyExcludedPatch');
+    expect(excludedPatches).toHaveLength(1);
+    if (excludedPatches[0].kind === 'apiKeyExcludedPatch') {
+      expect(excludedPatches[0].modelsWithoutStar).toEqual(['claude-x']);
+    }
+    // bare entry stays (claude uses excludedModels, not catalog removal)
+    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
+    modelPuts.forEach((p) => {
+      if (p.kind === 'apiKeyModelsPut') {
+        expect(p.models).not.toContainEqual({ name: 'claude-x', alias: 'my-claude' });
+      }
+    });
+  });
+});
+
+describe('planAliasDelete', () => {
+  test('claude apikey: deleting an alias whose target was channel-disabled keeps it excluded (no bare callable entry)', () => {
+    const resource = mkResource('res', 'claude', {
+      models: [{ name: 'claude-x' }], // bare entry (alias pruned when channel-disabled)
+      excludedModels: ['claude-x'], // channel-disabled -> excluded
+    });
+    const { channel } = suspendedApiKeyTarget('my-claude', 'res', 'claude', 'claude-x');
+    const state = mkState({ resources: [resource], mappingChannels: [channel] });
+    const ops = planAliasDelete({ state, aliasKey: 'my-claude' });
+
+    // Before fix: suspended target treated as abandoned -> toClearExclude -> excludedModels drops
+    // 'claude-x', leaving a bare callable entry. After fix: routed through suspendedTargets ->
+    // toDisable -> 'claude-x' stays in excludedModels.
+    const excludedPatches = opsOfKind(ops, 'apiKeyExcludedPatch');
+    expect(excludedPatches).toHaveLength(1);
+    if (excludedPatches[0].kind === 'apiKeyExcludedPatch') {
+      expect(excludedPatches[0].modelsWithoutStar).toEqual(['claude-x']);
+    }
+    // bare entry is NOT re-added with the deleted alias
+    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
+    modelPuts.forEach((p) => {
+      if (p.kind === 'apiKeyModelsPut') {
+        expect(p.models).not.toContainEqual({ name: 'claude-x', alias: 'my-claude' });
+      }
+    });
+  });
+
+  test('openaiCompatibility: deleting an alias whose target was channel-disabled keeps it removed (no re-add)', () => {
+    const resource = mkResource('res', 'openaiCompatibility', {
+      models: [], // gpt-4o removed when channel-disabled
+    });
+    const { channel } = suspendedApiKeyTarget('my-gpt', 'res', 'openaiCompatibility', 'gpt-4o');
+    const state = mkState({
+      resources: [resource],
+      mappingChannels: [channel],
+      accessEntries: [accessEntryWithCatalog('apiKey:res:gpt-4o', [{ name: 'gpt-4o' }])],
+    });
+    const ops = planAliasDelete({ state, aliasKey: 'my-gpt' });
+
+    // gpt-4o must NOT come back as a callable bare entry
+    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
+    modelPuts.forEach((p) => {
+      if (p.kind === 'apiKeyModelsPut') {
+        expect(p.models).not.toContainEqual({ name: 'gpt-4o' });
+        expect(p.models).not.toContainEqual({ name: 'gpt-4o', alias: 'my-gpt' });
+      }
+    });
   });
 });
 

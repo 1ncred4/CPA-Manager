@@ -445,9 +445,7 @@ export function planAliasSave(input: {
 
   const baselineChannel =
     isEditing && prevAliasKey ? state.mapping.byAliasKey.get(prevAliasKey) : undefined;
-  const baselineTargets: MappingTargetRef[] = baselineChannel
-    ? (baselineChannel.targets as MappingTargetRef[])
-    : [];
+  const baselineTargets = baselineChannel ? baselineChannel.targets : [];
 
   const persistableSelected = filterPersistableMappingTargets(finalAlias, draft.selectedTargets);
   const persistableBaseline = filterPersistableMappingTargets(
@@ -458,9 +456,16 @@ export function planAliasSave(input: {
   const selectedKeys = new Set(draft.selectedTargets.map(mappingTargetKey));
   const suspendedKeys = new Set(draft.suspendedTargets.map((s) => mappingTargetKey(s.target)));
   const claimedKeys = new Set<string>([...selectedKeys, ...suspendedKeys]);
-  const abandonedTargets = baselineTargets.filter(
-    (t) => !claimedKeys.has(mappingTargetKey(t))
-  );
+  // abandoned 区分「原已渠道禁用（suspended）」与「原活跃」：
+  // 前者须继续禁用（走 suspendedTargets -> toDisable，保持 excludedModels 排除 / catalog 移除），
+  // 不能走 abandonedTargets -> toClearExclude 把 claude apikey 的 excludedModels 摘掉而复活成裸条目。
+  const abandonedSuspended: MappingTargetRef[] = [];
+  const abandonedActive: MappingTargetRef[] = [];
+  baselineTargets.forEach((t) => {
+    if (claimedKeys.has(mappingTargetKey(t))) return;
+    if (t.suspended) abandonedSuspended.push(t);
+    else abandonedActive.push(t);
+  });
 
   const fullyDeleted = draft.selectedTargets.length === 0 && draft.suspendedTargets.length === 0;
 
@@ -521,8 +526,11 @@ export function planAliasSave(input: {
   const { toEnable, toDisable, toClearExclude } = partitionIdentityAccessTargets({
     alias: finalAlias,
     selectedTargets: draft.selectedTargets,
-    suspendedTargets: draft.suspendedTargets.map((s) => ({ target: s.target })),
-    abandonedTargets,
+    suspendedTargets: [
+      ...draft.suspendedTargets.map((s) => ({ target: s.target })),
+      ...abandonedSuspended.map((t) => ({ target: t })),
+    ],
+    abandonedTargets: abandonedActive,
   });
 
   const identityOauthTouched = new Set<string>();
@@ -864,8 +872,11 @@ export function planAliasDelete(input: {
     });
   });
 
-  // 4. 曾持有的目标（含渠道内挂起）恢复原名入口
-  const held: MappingTargetRef[] = [];
+  // 4. 曾持有的目标恢复原名入口：活跃目标 re-expose 原名（toClearExclude）；
+  //    渠道内挂起（已禁用）目标必须保持禁用（toDisable：excludedModels 仍排除 / catalog 仍移除），
+  //    不能因删除 alias 而复活成可调用的裸条目（claude apikey 的 excludedModels 会被 toClearExclude 摘掉）。
+  const heldActive: MappingTargetRef[] = [];
+  const heldSuspended: MappingTargetRef[] = [];
   const seen = new Set<string>();
   channel.targets.forEach((t) => {
     const ref: MappingTargetRef =
@@ -875,16 +886,17 @@ export function planAliasDelete(input: {
     const key = mappingTargetKey(ref);
     if (seen.has(key)) return;
     seen.add(key);
-    held.push(ref);
+    if (t.suspended) heldSuspended.push(ref);
+    else heldActive.push(ref);
   });
-  if (held.length) {
+  if (heldActive.length || heldSuspended.length) {
     ops.push(
       ...planIdentityAccessSync({
         state,
         alias,
         selectedTargets: [],
-        suspendedTargets: [],
-        abandonedTargets: held,
+        suspendedTargets: heldSuspended,
+        abandonedTargets: heldActive,
       })
     );
   }
