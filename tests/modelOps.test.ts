@@ -77,6 +77,23 @@ describe('v2 model access planner', () => {
     expect(patch).toMatchObject({ entries: [{ name: 'a', alias: 'chat' }] });
   });
 
+  test('OAuth identity targets do not create redundant alias entries', () => {
+    const ops = planAliasSave({
+      state: state({}),
+      draft: {
+        alias: 'a',
+        previousAliasKey: null,
+        baselineAlias: '',
+        isEditing: false,
+        selectedTargets: [oauthRef('claude', 'a')],
+        disabledTargets: [],
+      },
+    });
+
+    expect(ops.ops.some((op) => op.kind === 'oauthAliasPatch')).toBe(false);
+    expect(ops.ops.some((op) => op.kind === 'explicitIdentityMark')).toBe(true);
+  });
+
   test('mapping target disable stores exact alias binding and restore removes only that binding', () => {
     const ref = apiRef('gemini:0', 'gemini', 'a');
     const mapping = { byAliasKey: new Map([['chat', { alias: 'chat', aliasKey: 'chat', targets: [{ ...ref, displayName: 'a', providerLabel: 'Gemini', iconSrc: null, suspended: false }] }]]) };

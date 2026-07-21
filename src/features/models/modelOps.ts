@@ -153,7 +153,16 @@ function upsertAliasBindings(
     result.map((entry) => `${lower(entry.name)}|${lower(entry.alias)}`)
   );
   targets
-    .filter((target) => target.source === 'oauth' && !disabledKeys.has(mappingTargetKey(target)))
+    // OAuth model definitions already expose identity aliases natively.  The
+    // management API only needs entries that redirect to another name; writing
+    // `name === alias` for a catalog-only OAuth target makes a normal mapping
+    // save fail on CPA versions that reject redundant identity entries.
+    .filter(
+      (target) =>
+        target.source === 'oauth' &&
+        !same(target.modelId, alias) &&
+        !disabledKeys.has(mappingTargetKey(target))
+    )
     .forEach((target) => {
       const entryKey = `${lower(target.modelId)}|${lower(alias)}`;
       if (seen.has(entryKey)) return;
@@ -493,8 +502,34 @@ function planAliasBackendForSource(
   sourceKeys.forEach((sourceKey) => {
     if (sourceKey.startsWith('oauth:')) {
       const channel = sourceKey.slice('oauth:'.length);
-      let entries = state.oauthAliasMap[channel] ?? [];
-      entries = removeAliases(entries, aliasNames);
+      const currentEntries = state.oauthAliasMap[channel] ?? [];
+      const selectedIdentityKeys = new Set(
+        (selectedBySource.get(sourceKey) ?? [])
+          .filter((target) => same(target.modelId, finalAlias))
+          .map(mappingTargetKey)
+      );
+      // Keep an identity entry only when it was already persisted and the user
+      // still selected that target.  Do not create a new identity entry for a
+      // static OAuth catalog model.
+      const retainedIdentityEntries = currentEntries.filter(
+        (entry) =>
+          same(entry.name, entry.alias) &&
+          same(entry.alias, finalAlias) &&
+          selectedIdentityKeys.has(
+            mappingTargetKey({ source: 'oauth', channel, modelId: entry.name })
+          )
+      );
+      let entries = removeAliases(currentEntries, aliasNames);
+      retainedIdentityEntries.forEach((entry) => {
+        if (
+          !entries.some(
+            (candidate) =>
+              same(candidate.name, entry.name) && same(candidate.alias, entry.alias)
+          )
+        ) {
+          entries.push(entry);
+        }
+      });
       entries = upsertAliasBindings(entries, finalAlias, selectedBySource.get(sourceKey) ?? [], disabledKeys);
       entries = normalizeOauthIdentityEntries(
         entries,
