@@ -25,4 +25,23 @@ describe('API key model mapping writes', () => {
     expect(next.models).toBeUndefined();
     expect(next.excludedModels).toBeUndefined();
   });
+
+  test('managed Claude all-model exclusion is cleared when mappings return', () => {
+    const next = buildApiKeyModelsUpdate(
+      { ...resource('claude', { excludedModels: ['*'] }), disabled: false },
+      [{ name: 'MiniMax-M3', alias: 'chat' }]
+    );
+
+    expect(next.models).toEqual([{ name: 'MiniMax-M3', alias: 'chat' }]);
+    expect(next.excludedModels).toEqual([]);
+  });
+
+  test('manual Claude provider disable keeps the all-model exclusion', () => {
+    const next = buildApiKeyModelsUpdate(
+      { ...resource('claude', { excludedModels: ['*'] }), disabled: true },
+      [{ name: 'MiniMax-M3', alias: 'chat' }]
+    );
+
+    expect(next.excludedModels).toEqual(['*']);
+  });
 });

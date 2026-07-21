@@ -3,7 +3,11 @@
  */
 
 import { providersApi } from '@/services/api';
-import { withDisableAllModelsRule } from '@/components/providers/utils';
+import {
+  hasDisableAllModelsRule,
+  withoutDisableAllModelsRule,
+  withDisableAllModelsRule,
+} from '@/components/providers/utils';
 import type { GeminiKeyConfig, ModelAlias, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import type { ProviderResource } from '@/features/providers/types';
 
@@ -27,6 +31,18 @@ export function buildApiKeyModelsUpdate(
       ...current,
       models,
       excludedModels: withDisableAllModelsRule(current.excludedModels),
+    };
+  }
+
+  if (
+    resource.brand === 'claude' &&
+    !resource.disabled &&
+    hasDisableAllModelsRule(current.excludedModels)
+  ) {
+    return {
+      ...current,
+      models,
+      excludedModels: withoutDisableAllModelsRule(current.excludedModels),
     };
   }
 

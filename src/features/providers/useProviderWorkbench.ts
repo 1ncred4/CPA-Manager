@@ -11,9 +11,15 @@ import {
 } from '@/features/models/modelMapping';
 import {
   loadModelDisabledSnapshots,
+  loadMappingDisabled,
   putModelDisabledSnapshot,
   takeModelDisabledSnapshot,
 } from '@/features/models/modelDisabledState';
+import {
+  clearProviderManualDisabled,
+  listManuallyDisabledProviders,
+  markProviderManuallyDisabled,
+} from '@/features/models/managedProviderDisable';
 import type { GeminiKeyConfig, ModelAlias, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import {
   claudeToResource,
@@ -85,6 +91,23 @@ const parseThinkingJson = (value: string | undefined): Record<string, unknown> |
   }
   return parsed as Record<string, unknown>;
 };
+
+function isMappingManagedProviderDisable(
+  apiBase: string,
+  resource: ProviderResource
+): boolean {
+  if (!apiBase || resource.brand !== 'claude' || !resource.disabled || resource.models.length) {
+    return false;
+  }
+  if (listManuallyDisabledProviders(apiBase).has(resource.id)) return false;
+  const raw = resource.raw as { excludedModels?: string[] };
+  if (!Array.isArray(raw.excludedModels) || !raw.excludedModels.includes('*')) return false;
+  return Array.from(loadMappingDisabled(apiBase).values())
+    .flat()
+    .some(
+      (entry) => entry.target.source === 'apiKey' && entry.target.resourceId === resource.id
+    );
+}
 
 /**
  * Build models[] for provider save.
@@ -189,14 +212,18 @@ const buildModelAliases = (
 const buildProviderKeyConfig = (
   brand: 'gemini' | 'codex' | 'xai' | 'claude' | 'vertex',
   input: ProviderEntryFormInput,
-  existing?: ProviderKeyConfig | GeminiKeyConfig | null
+  existing?: ProviderKeyConfig | GeminiKeyConfig | null,
+  options?: { preserveBackendOmittedAllModelsRule?: boolean }
 ): ProviderKeyConfig | GeminiKeyConfig => {
   const headers = headersFromEntries(input.headers);
   // Exclude brands keep disabled models in models[]; exact excludes go to excludedModels.
   const models = buildModelAliases(input.models, false, existing?.models);
+  const hasBackendOmittedModels = input.models.some((model) => model.backendOmitted === true);
+  const preserveBackendOmittedAllModelsRule =
+    options?.preserveBackendOmittedAllModelsRule === true && hasBackendOmittedModels;
   const excluded = mergeFormExcludedModels({
     existingExcluded: existing?.excludedModels,
-    entryDisabled: input.disabled,
+    entryDisabled: input.disabled || preserveBackendOmittedAllModelsRule,
     formDisabledModelIds: collectDisabledModelIds(input.models),
   });
   const apiKeyChanged = input.apiKey.trim().length > 0;
@@ -326,6 +353,7 @@ function buildOpenAIModelsForSave(input: {
 
 export function useProviderWorkbench(): UseProviderWorkbenchResult {
   const connectionStatus = useAuthStore((s) => s.connectionStatus);
+  const apiBase = useAuthStore((s) => s.apiBase);
   const config = useConfigStore((s) => s.config);
   const fetchConfig = useConfigStore((s) => s.fetchConfig);
   const updateConfigValue = useConfigStore((s) => s.updateConfigValue);
@@ -413,14 +441,18 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
       }
       return {
         id: brand,
-        resources,
+        resources: resources.map((resource) =>
+          isMappingManagedProviderDisable(apiBase, resource)
+            ? { ...resource, disabled: false }
+            : resource
+        ),
       };
     });
     return {
       fetchedAt,
       groups,
     };
-  }, [config, fetchedAt]);
+  }, [apiBase, config, fetchedAt]);
 
   /* ------------------- mutations ------------------- */
 
@@ -472,35 +504,45 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
           await providersApi.updateGeminiKey(
             selector.apiKey,
             selector.baseUrl,
-            buildProviderKeyConfig('gemini', input, existing) as GeminiKeyConfig
+            buildProviderKeyConfig('gemini', input, existing, {
+              preserveBackendOmittedAllModelsRule: !resource.disabled,
+            }) as GeminiKeyConfig
           );
         } else if (brand === 'codex' && selector.brand === 'codex') {
           const existing = resource.raw as ProviderKeyConfig;
           await providersApi.updateCodexConfig(
             selector.apiKey,
             selector.baseUrl,
-            buildProviderKeyConfig('codex', input, existing) as ProviderKeyConfig
+            buildProviderKeyConfig('codex', input, existing, {
+              preserveBackendOmittedAllModelsRule: !resource.disabled,
+            }) as ProviderKeyConfig
           );
         } else if (brand === 'xai' && selector.brand === 'xai') {
           const existing = resource.raw as ProviderKeyConfig;
           await providersApi.updateXAIConfig(
             selector.apiKey,
             selector.baseUrl,
-            buildProviderKeyConfig('xai', input, existing) as ProviderKeyConfig
+            buildProviderKeyConfig('xai', input, existing, {
+              preserveBackendOmittedAllModelsRule: !resource.disabled,
+            }) as ProviderKeyConfig
           );
         } else if (brand === 'claude' && selector.brand === 'claude') {
           const existing = resource.raw as ProviderKeyConfig;
           await providersApi.updateClaudeConfig(
             selector.apiKey,
             selector.baseUrl,
-            buildProviderKeyConfig('claude', input, existing) as ProviderKeyConfig
+            buildProviderKeyConfig('claude', input, existing, {
+              preserveBackendOmittedAllModelsRule: !resource.disabled,
+            }) as ProviderKeyConfig
           );
         } else if (brand === 'vertex' && selector.brand === 'vertex') {
           const existing = resource.raw as ProviderKeyConfig;
           await providersApi.updateVertexConfig(
             selector.apiKey,
             selector.baseUrl,
-            buildProviderKeyConfig('vertex', input, existing) as ProviderKeyConfig
+            buildProviderKeyConfig('vertex', input, existing, {
+              preserveBackendOmittedAllModelsRule: !resource.disabled,
+            }) as ProviderKeyConfig
           );
         } else if (brand === 'openaiCompatibility' && selector.brand === 'openaiCompatibility') {
           const existing = resource.raw as OpenAIProviderConfig;
@@ -517,6 +559,12 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
             selector.index,
             buildOpenAIConfig(input, existing, openaiModelPlan?.models)
           );
+        }
+
+        if (input.disabled) {
+          markProviderManuallyDisabled(apiBase, resource.id);
+        } else if (resource.disabled) {
+          clearProviderManualDisabled(apiBase, resource.id);
         }
 
         if (openaiModelPlan && apiBase) {
@@ -565,12 +613,13 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
           );
           updateConfigValue('openai-compatibility', next);
         }
+        clearProviderManualDisabled(apiBase, resource.id);
         await refetch();
       } finally {
         setMutating(false);
       }
     },
-    [config, refetch, updateConfigValue]
+    [apiBase, config, refetch, updateConfigValue]
   );
 
   const toggleDisabled = useCallback(
@@ -611,12 +660,17 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
         } else if (brand === 'openaiCompatibility' && selector.brand === 'openaiCompatibility') {
           await providersApi.updateOpenAIProviderDisabled(selector.index, disabled);
         }
+        if (disabled) {
+          markProviderManuallyDisabled(apiBase, resource.id);
+        } else {
+          clearProviderManualDisabled(apiBase, resource.id);
+        }
         await refetch();
       } finally {
         setMutating(false);
       }
     },
-    [refetch]
+    [apiBase, refetch]
   );
 
   return {

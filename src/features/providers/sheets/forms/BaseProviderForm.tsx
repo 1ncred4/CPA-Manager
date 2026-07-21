@@ -9,7 +9,6 @@ import {
   IconX,
 } from '@/components/ui/icons';
 import { Select } from '@/components/ui/Select';
-import { hasDisableAllModelsRule } from '@/components/providers/utils';
 import { useAuthStore } from '@/stores';
 import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import type { ModelInfo } from '@/utils/models';
@@ -121,7 +120,7 @@ function buildInitialForm(
       baseUrl: cfg.baseUrl ?? '',
       proxyUrl: '',
       prefix: cfg.prefix ?? '',
-      disabled: cfg.disabled === true,
+      disabled: resource.disabled,
       disableCooling: cfg.disableCooling === true,
       priority: cfg.priority,
       models: modelsToFormEntriesWithAccess({
@@ -147,7 +146,7 @@ function buildInitialForm(
   }
 
   const cfg = raw as GeminiKeyConfig & ProviderKeyConfig;
-  const disabled = hasDisableAllModelsRule(cfg.excludedModels);
+  const disabled = resource.disabled;
   const exactExcludedIds = collectExactExcludedIds(cfg.excludedModels);
   const catalogOnlyModelIds = loadMappingDisabledCatalogModelIdsSafe(apiBase, resource.id);
   return {
