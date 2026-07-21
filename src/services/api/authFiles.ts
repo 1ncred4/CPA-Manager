@@ -288,14 +288,16 @@ export const normalizeOauthModelAlias = (
     if (!Array.isArray(mappings)) return;
 
     const normalized = result[key] ?? [];
-    const seenAlias = new Set(normalized.map((entry) => entry.alias.toLowerCase()));
+    const seenEntries = new Set(
+      normalized.map((entry) => `${entry.name.toLowerCase()}|${entry.alias.toLowerCase()}`)
+    );
     mappings
       .map((item) => {
         if (!item || typeof item !== 'object') return null;
         const entry = item as Record<string, unknown>;
         const name = String(entry.name ?? entry.id ?? entry.model ?? '').trim();
-        const alias = String(entry.alias ?? '').trim();
-        if (!name || !alias) return null;
+        const alias = String(entry.alias ?? name).trim() || name;
+        if (!name) return null;
         const fork = entry.fork === true;
         const forceMappingValue = entry['force-mapping'] ?? entry.forceMapping;
         const normalizedEntry: OAuthModelAliasEntry = { name, alias };
@@ -308,9 +310,9 @@ export const normalizeOauthModelAlias = (
       .filter(Boolean)
       .forEach((entry) => {
         const aliasEntry = entry as OAuthModelAliasEntry;
-        const aliasKey = aliasEntry.alias.toLowerCase();
-        if (seenAlias.has(aliasKey)) return;
-        seenAlias.add(aliasKey);
+        const entryKey = `${aliasEntry.name.toLowerCase()}|${aliasEntry.alias.toLowerCase()}`;
+        if (seenEntries.has(entryKey)) return;
+        seenEntries.add(entryKey);
         normalized.push(aliasEntry);
       });
 

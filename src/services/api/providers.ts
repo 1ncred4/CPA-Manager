@@ -290,9 +290,7 @@ const serializeModelAliases = (models?: ModelAlias[], includeOpenAIFields = fals
         .map((model) => {
           if (!model?.name) return null;
           const payload: Record<string, unknown> = { name: model.name };
-          if (model.alias && model.alias !== model.name) {
-            payload.alias = model.alias;
-          }
+          payload.alias = model.alias || model.name;
           if (model.priority !== undefined) {
             payload.priority = model.priority;
           }
@@ -360,7 +358,7 @@ const serializeVertexModelAliases = (models?: ModelAlias[]) =>
     ? models
         .map((model) => {
           const name = typeof model?.name === 'string' ? model.name.trim() : '';
-          const alias = typeof model?.alias === 'string' ? model.alias.trim() : '';
+          const alias = typeof model?.alias === 'string' ? model.alias.trim() : name;
           if (!name || !alias) return null;
           return { name, alias };
         })

@@ -732,7 +732,7 @@ export function BaseProviderForm({
         >
           <p className={styles.sectionHintInline}>
             {t('providersPage.form.modelsSectionHint', {
-              defaultValue: '只维护去重后的模型 ID；别名/手动渠道请在「模型映射」中管理。',
+              defaultValue: '只维护去重后的模型 ID；别名请在「模型映射」中管理。',
             })}
           </p>
           <div className={styles.entriesList}>

@@ -22,6 +22,8 @@ import {
 import { useProviderWorkbench } from '@/features/providers/useProviderWorkbench';
 import type { GeminiKeyConfig, ModelAlias, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import type { ProviderResource } from '@/features/providers/types';
+import { accessEnabledKey } from './modelMapping';
+import { loadModelDisabledSnapshots, takeModelDisabledSnapshot } from './modelDisabledState';
 import { getErrorMessage } from '@/utils/helpers';
 import styles from './ModelExcludedEdit.module.scss';
 
@@ -73,7 +75,11 @@ export function ApiKeyModelsEditPage() {
     };
     if (resource.brand === 'openaiCompatibility') {
       const cfg = resource.raw as OpenAIProviderConfig;
-      const models = uniqueNames(cfg.models);
+      const suspended = loadModelDisabledSnapshots(useAuthStore.getState().apiBase);
+      const disabledIds = Array.from(suspended.values())
+        .filter((snapshot) => snapshot.target.source === 'apiKey' && snapshot.target.resourceId === resource.id)
+        .map((snapshot) => snapshot.target.modelId);
+      const models = uniqueNames([...(cfg.models ?? []), ...disabledIds.map((name) => ({ name, alias: name }))]);
       setModelsText(models);
       setExcludedText('');
       setBaseline({ models, excluded: '' });
@@ -171,11 +177,10 @@ export function ApiKeyModelsEditPage() {
       }
       const bare = prevList[0];
       if (bare) {
-        const next: ModelAlias = { ...bare, name };
-        delete (next as { alias?: string }).alias;
+        const next: ModelAlias = { ...bare, name, alias: bare.alias || name };
         result.push(next);
       } else {
-        result.push({ name });
+        result.push({ name, alias: name });
       }
     });
     return result;
@@ -198,9 +203,23 @@ export function ApiKeyModelsEditPage() {
         if (selector.brand !== 'openaiCompatibility') throw new Error('Invalid selector');
         const name = selector.name || cfg.name || '';
         const models = mergeCatalogWithExistingAliases(catalogNames, cfg.models);
+        const snapshots = loadModelDisabledSnapshots(useAuthStore.getState().apiBase);
+        const disabledForResource = Array.from(snapshots.entries()).filter(
+          ([, snapshot]) => snapshot.target.source === 'apiKey' && snapshot.target.resourceId === resource.id
+        );
+        const disabledKeys = new Set(disabledForResource.map(([key]) => key));
+        const activeModels = models.filter(
+          (model) => !disabledKeys.has(accessEnabledKey({ source: 'apiKey', resourceId: resource.id, brand: 'openaiCompatibility', modelId: model.name }))
+        );
+        disabledForResource.forEach(([key, snapshot]) => {
+          if (!catalogNames.some((modelId) => modelId.toLowerCase() === snapshot.target.modelId.toLowerCase())) {
+            takeModelDisabledSnapshot(useAuthStore.getState().apiBase, snapshot.target);
+          }
+          void key;
+        });
         await providersApi.updateOpenAIProvider(name, selector.index, {
           ...cfg,
-          models,
+          models: activeModels.length ? activeModels : undefined,
         });
       } else {
         const cfg = resource.raw as GeminiKeyConfig | ProviderKeyConfig;
@@ -311,7 +330,7 @@ export function ApiKeyModelsEditPage() {
                 </div>
                 <div className={styles.settingsHeaderHint}>
                   {t('modelsPage.catalogEditorHint', {
-                    defaultValue: '此处只维护去重后的模型目录，保存时会保留映射页写入的手动渠道别名。',
+                    defaultValue: '此处只维护去重后的模型目录，保存时会保留映射页写入的别名。',
                   })}
                 </div>
               </div>

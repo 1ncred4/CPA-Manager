@@ -4,10 +4,7 @@
  */
 
 import { stripDisableAllModelsRule } from '@/components/providers/utils';
-import {
-  listSuspendedCatalogForResource,
-  type SuspendedCatalogEntry,
-} from '@/features/models/catalogSuspend';
+import { loadModelDisabledSnapshots } from '@/features/models/modelDisabledState';
 import type { ModelAlias } from '@/types';
 import type { ModelEntryInput } from './types';
 
@@ -86,7 +83,7 @@ export type FormModelsLoadOptions = {
   /** Exact model ids currently excluded (exclude brands). */
   exactExcludedIds?: Iterable<string>;
   /** Catalog-suspended models to append as enabled=false (openaiCompatibility). */
-  suspendedCatalog?: SuspendedCatalogEntry[];
+  suspendedCatalog?: Array<{ modelId: string; entries: ModelAlias[] }>;
 };
 
 /**
@@ -191,7 +188,10 @@ export function resolveEntriesToSuspend(
   );
   if (fromExisting.length) return fromExisting.map((e) => ({ ...e }));
   if (formEntry) {
-    const entry: ModelAlias = { name: formEntry.name.trim() || modelId };
+    const entry: ModelAlias = {
+      name: formEntry.name.trim() || modelId,
+      alias: formEntry.alias?.trim() || formEntry.name.trim() || modelId,
+    };
     if (formEntry.priority !== undefined) entry.priority = formEntry.priority;
     if (formEntry.testModel) entry.testModel = formEntry.testModel;
     if (formEntry.image === true) entry.image = true;
@@ -207,14 +207,16 @@ export function resolveEntriesToSuspend(
     }
     return [entry];
   }
-  return [{ name: modelId }];
+  return [{ name: modelId, alias: modelId }];
 }
 
 /** Load suspended catalog for a resource when apiBase is known. */
 export function loadSuspendedCatalogSafe(
   apiBase: string | undefined,
   resourceId: string | undefined
-): SuspendedCatalogEntry[] {
+): Array<{ modelId: string; entries: ModelAlias[] }> {
   if (!apiBase || !resourceId) return [];
-  return listSuspendedCatalogForResource(apiBase, resourceId);
+  return Array.from(loadModelDisabledSnapshots(apiBase).values())
+    .filter((snapshot) => snapshot.target.source === 'apiKey' && snapshot.target.resourceId === resourceId)
+    .map((snapshot) => ({ modelId: snapshot.target.modelId, entries: snapshot.entries as ModelAlias[] }));
 }

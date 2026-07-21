@@ -1,22 +1,4 @@
-/**
- * 计算模块（纯函数）：基于 ModelManagementState diff 出后端修改步骤。
- *
- * 设计：
- * - 无 React、无 localStorage、无 API。所有副作用编码为 ModelOp，由 modelOpApplier 执行。
- * - 每个 op 自带 phase + queueKey：同 queueKey（channel / resourceId）串行，不同 key 并发；
- *   phase 控制同 key 内顺序：before-backend（同步 localStorage）→ backend（await API）→ after-backend（同步 localStorage）。
- * - 暂停数据（suspend merge/take）的 payload 一律在 plan 时从 baseline 计算好，写入时机由 phase 决定：
- *   - 禁用：mappingSuspendMerge/catalogSuspendMerge = before-backend（先于剪枝 PUT 捕获绑定，
- *     否则剪枝成功但后续 op 失败时绑定丢失）。
- *   - 启用：mappingSuspendTake/catalogSuspendTake = after-backend（仅当恢复 PUT 成功才清 localStorage，
- *     否则恢复失败时 localStorage 被清空→绑定永久丢失）。
- * - managedExcludeUnmark（用户主动 toggle）= before-backend，匹配现有 useModelAccessList L467。
- *
- * 复用既有纯函数（不重写）：collectMappingsForTarget / prune* / restore* / updateOAuthExcludedRule /
- * toggleApiKeyExcludedList / removeModelFromCatalog / restoreModelToCatalog / diffMappingTargets /
- * planAliasTargetAssignments / applyOauthAliasTargetChanges / applyApiKeyModelAliasChanges /
- * partitionIdentityAccessTargets / planOauthIdentityDisable / planOauthIdentityEnable。
- */
+/** Pure planner for the v2 model-management state. */
 
 import type { ModelAlias, OAuthModelAliasEntry } from '@/types';
 import type { ProviderBrand, ProviderResource } from '@/features/providers/types';
@@ -29,44 +11,18 @@ import {
 import { toggleApiKeyExcludedList } from './modelAccessRows';
 import {
   accessEnabledKey,
-  applyApiKeyModelAliasChanges,
-  applyOauthAliasTargetChanges,
-  collectConfiguredApiKeyResourceIdsForAlias,
-  collectConfiguredOauthChannelsForAlias,
-  filterPersistableMappingTargets,
   mappingTargetKey,
-  planAliasTargetAssignments,
   toAliasKey,
   type MappingTargetRef,
 } from './modelMapping';
 import {
-  collectMappingsForTarget,
-  pruneApiKeyModelsForModel,
-  pruneOauthEntriesForModel,
-  restoreApiKeyModels,
-  restoreOauthEntries,
-  type SuspendedMapping,
-} from './mappingSuspend';
-import { removeModelFromCatalog, restoreModelToCatalog } from './catalogSuspend';
-import { collectSuspendedBindingsForTarget, type ModelManagementState } from './modelManagementState';
-import { planIdentityAccessSync } from './modelOpsIdentity';
-import {
-  partitionIdentityAccessTargets,
-  planOauthIdentityDisable,
-  planOauthIdentityEnable,
-} from './syncIdentityAccessOnMapping';
+  collectDisabledMappingsForTarget,
+  type ModelManagementState,
+} from './modelManagementState';
+import type { DisabledMapping, DisabledModelSnapshot } from './modelDisabledState';
 
 const lower = (value: string): string => value.trim().toLowerCase();
-
-function readApiKeyModels(resource: ProviderResource): ModelAlias[] {
-  const raw = resource.raw as { models?: ModelAlias[] } | null | undefined;
-  if (!raw || !Array.isArray(raw.models)) return [];
-  return raw.models;
-}
-
-// ---------------------------------------------------------------------------
-// Op 判别联合
-// ---------------------------------------------------------------------------
+const same = (a: string, b: string): boolean => lower(a) === lower(b);
 
 export type ModelOpPhase = 'before-backend' | 'backend' | 'after-backend';
 
@@ -102,37 +58,296 @@ export type ModelOp =
       modelsWithoutStar: string[];
     }
   | {
-      kind: 'mappingSuspendMerge';
+      kind: 'modelDisabledPut';
       phase: ModelOpPhase;
       queueKey: string;
       targetKey: string;
-      entries: SuspendedMapping[];
-    }
-  | { kind: 'mappingSuspendTake'; phase: ModelOpPhase; queueKey: string; targetKey: string }
-  | { kind: 'mappingSuspendClearAlias'; phase: ModelOpPhase; queueKey: string; aliasKey: string }
-  | {
-      kind: 'catalogSuspendMerge';
-      phase: ModelOpPhase;
-      queueKey: string;
-      resourceId: string;
-      modelId: string;
-      entries: ModelAlias[];
+      snapshot: DisabledModelSnapshot;
     }
   | {
-      kind: 'catalogSuspendTake';
+      kind: 'modelDisabledTake';
       phase: ModelOpPhase;
       queueKey: string;
-      resourceId: string;
-      modelId: string;
+      target: MappingTargetRef;
     }
-  | { kind: 'managedExcludeMark'; phase: ModelOpPhase; queueKey: string; key: string }
-  | { kind: 'managedExcludeUnmark'; phase: ModelOpPhase; queueKey: string; key: string }
-  | { kind: 'mappingClaim'; phase: ModelOpPhase; queueKey: string; aliasKey: string }
-  | { kind: 'mappingUnclaim'; phase: ModelOpPhase; queueKey: string; aliasKey: string };
+  | {
+      kind: 'mappingDisabledMerge';
+      phase: ModelOpPhase;
+      queueKey: string;
+      targetKey: string;
+      entries: DisabledMapping[];
+    }
+  | {
+      kind: 'mappingDisabledTake';
+      phase: ModelOpPhase;
+      queueKey: string;
+      targetKey: string;
+      alias: string;
+    }
+  | {
+      kind: 'mappingDisabledClearAlias';
+      phase: ModelOpPhase;
+      queueKey: string;
+      aliasKey: string;
+    }
+  | {
+      kind: 'explicitIdentityMark';
+      phase: ModelOpPhase;
+      queueKey: string;
+      target: MappingTargetRef;
+    }
+  | {
+      kind: 'explicitIdentityUnmark';
+      phase: ModelOpPhase;
+      queueKey: string;
+      target: MappingTargetRef;
+    };
 
-// ---------------------------------------------------------------------------
-// 子规划器 1：模型禁用 toggle（即时）
-// ---------------------------------------------------------------------------
+function readApiKeyModels(resource: ProviderResource): ModelAlias[] {
+  const raw = resource.raw as { models?: ModelAlias[] } | null | undefined;
+  if (!Array.isArray(raw?.models)) return [];
+  return raw.models
+    .map((entry) => {
+      const name = String(entry?.name ?? '').trim();
+      if (!name) return null;
+      return { ...entry, name, alias: String(entry?.alias ?? name).trim() || name };
+    })
+    .filter((entry): entry is ModelAlias => Boolean(entry));
+}
+
+function supportsExcludedModels(resource: ProviderResource): boolean {
+  // Capability is a provider contract, not whether the optional field happened
+  // to be present in the last response.
+  return resource.brand !== 'openaiCompatibility';
+}
+
+function stripTarget(target: MappingTargetRef): MappingTargetRef {
+  if (target.source === 'oauth') {
+    return { source: 'oauth', channel: target.channel, modelId: target.modelId };
+  }
+  return {
+    source: 'apiKey',
+    resourceId: target.resourceId,
+    brand: target.brand,
+    modelId: target.modelId,
+  };
+}
+
+function modelEntriesForTarget(models: ModelAlias[], modelId: string): ModelAlias[] {
+  return models.filter((entry) => same(entry.name, modelId));
+}
+
+function removeAliases<T extends { alias: string }>(entries: T[], aliases: string[]): T[] {
+  const keys = new Set(aliases.map(toAliasKey).filter(Boolean));
+  return entries.filter((entry) => !keys.has(toAliasKey(entry.alias)));
+}
+
+function upsertAliasBindings(
+  entries: OAuthModelAliasEntry[],
+  alias: string,
+  targets: MappingTargetRef[],
+  disabledKeys: Set<string>
+): OAuthModelAliasEntry[] {
+  const result = removeAliases(entries, [alias]);
+  const seen = new Set(
+    result.map((entry) => `${lower(entry.name)}|${lower(entry.alias)}`)
+  );
+  targets
+    .filter((target) => target.source === 'oauth' && !disabledKeys.has(mappingTargetKey(target)))
+    .forEach((target) => {
+      const entryKey = `${lower(target.modelId)}|${lower(alias)}`;
+      if (seen.has(entryKey)) return;
+      seen.add(entryKey);
+      result.push({ name: target.modelId.trim(), alias: alias.trim() });
+    });
+  return result;
+}
+
+function normalizeOauthIdentityEntries(
+  entries: OAuthModelAliasEntry[],
+  modelIds: string[],
+  explicitIdentityKeys: Set<string>,
+  channel: string
+): OAuthModelAliasEntry[] {
+  const normalized = entries
+    .map((entry) => ({
+      ...entry,
+      name: String(entry.name ?? '').trim(),
+      alias: String(entry.alias ?? entry.name ?? '').trim() || String(entry.name ?? '').trim(),
+    }))
+    .filter((entry) => entry.name && entry.alias);
+  const ids = new Map<string, string>();
+  [...modelIds, ...normalized.map((entry) => entry.name)].forEach((id) => {
+    const trimmed = id.trim();
+    if (trimmed) ids.set(lower(trimmed), trimmed);
+  });
+  const result = normalized.filter((entry) => {
+    if (!same(entry.name, entry.alias)) return true;
+    const key = accessEnabledKey({ source: 'oauth', channel, modelId: entry.name });
+    return explicitIdentityKeys.has(key) ||
+      !normalized.some((other) => same(other.name, entry.name) && !same(other.name, other.alias));
+  });
+  ids.forEach((modelId, modelKey) => {
+    if (result.some((entry) => same(entry.name, modelId) && same(entry.alias, modelId))) return;
+    const key = accessEnabledKey({ source: 'oauth', channel, modelId });
+    if (
+      explicitIdentityKeys.has(key) ||
+      !normalized.some((entry) => same(entry.name, modelKey) && !same(entry.name, entry.alias))
+    ) {
+      result.push({ name: modelId, alias: modelId });
+    }
+  });
+  return dedupeEntries(result);
+}
+
+function upsertApiKeyBindings(
+  models: ModelAlias[],
+  alias: string,
+  targets: MappingTargetRef[],
+  disabledKeys: Set<string>
+): ModelAlias[] {
+  let result = models.map((entry) => ({
+    ...entry,
+    name: String(entry.name ?? '').trim(),
+    alias: String(entry.alias ?? entry.name ?? '').trim() || String(entry.name ?? '').trim(),
+  }));
+  result = result.filter((entry) => entry.name && !same(entry.alias, alias));
+  const seen = new Set(result.map((entry) => `${lower(entry.name)}|${lower(entry.alias)}`));
+  targets
+    .filter((target) => target.source === 'apiKey' && !disabledKeys.has(mappingTargetKey(target)))
+    .forEach((target) => {
+      const key = `${lower(target.modelId)}|${lower(alias)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      result.push({ name: target.modelId.trim(), alias: alias.trim() });
+    });
+  return dedupeEntries(result);
+}
+
+function normalizeApiKeyIdentityEntries(
+  models: ModelAlias[],
+  resource: ProviderResource,
+  explicitIdentityKeys: Set<string>
+): ModelAlias[] {
+  const normalized = models
+    .map((entry) => ({
+      ...entry,
+      name: String(entry.name ?? '').trim(),
+      alias: String(entry.alias ?? entry.name ?? '').trim() || String(entry.name ?? '').trim(),
+    }))
+    .filter((entry) => entry.name && entry.alias);
+  const ids = new Map<string, string>();
+  [...(resource.models ?? []), ...normalized.map((entry) => entry.name)].forEach((id) => {
+    const trimmed = String(id ?? '').trim();
+    if (trimmed) ids.set(lower(trimmed), trimmed);
+  });
+  const result = normalized.filter((entry) => {
+    if (!same(entry.name, entry.alias)) return true;
+    const key = accessEnabledKey({
+      source: 'apiKey',
+      resourceId: resource.id,
+      brand: resource.brand,
+      modelId: entry.name,
+    });
+    return explicitIdentityKeys.has(key) ||
+      !normalized.some((other) => same(other.name, entry.name) && !same(other.name, other.alias));
+  });
+  ids.forEach((modelId, modelKey) => {
+    if (result.some((entry) => same(entry.name, modelId) && same(entry.alias, modelId))) return;
+    const key = accessEnabledKey({
+      source: 'apiKey',
+      resourceId: resource.id,
+      brand: resource.brand,
+      modelId,
+    });
+    if (
+      explicitIdentityKeys.has(key) ||
+      !normalized.some((entry) => same(entry.name, modelKey) && !same(entry.name, entry.alias))
+    ) {
+      result.push({ name: modelId, alias: modelId });
+    }
+  });
+  return dedupeEntries(result);
+}
+
+function dedupeEntries<T extends { name: string; alias: string }>(entries: T[]): T[] {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const key = `${lower(entry.name)}|${lower(entry.alias)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function snapshotWithAlias(
+  snapshot: DisabledModelSnapshot,
+  baselineAlias: string,
+  finalAlias: string,
+  selected: Set<string>,
+  disabledMappingKeys: Set<string>
+): DisabledModelSnapshot {
+  const entries = snapshot.entries.map((entry) => ({
+    ...entry,
+    name: String(entry.name ?? '').trim(),
+    alias: String(entry.alias ?? entry.name ?? '').trim() || String(entry.name ?? '').trim(),
+  }));
+  const withoutOld = entries.filter((entry) => {
+    if (same(entry.alias, baselineAlias)) return false;
+    if (baselineAlias !== finalAlias && same(entry.alias, finalAlias)) return false;
+    return true;
+  });
+  if (selected.has(mappingTargetKey(snapshot.target)) && !disabledMappingKeys.has(mappingTargetKey(snapshot.target))) {
+    withoutOld.push({ name: snapshot.target.modelId, alias: finalAlias });
+  }
+  const normalized =
+    snapshot.target.source === 'oauth'
+      ? normalizeOauthIdentityEntries(
+          withoutOld as OAuthModelAliasEntry[],
+          [],
+          new Set(),
+          snapshot.target.channel
+        )
+      : (withoutOld as ModelAlias[]);
+  if (
+    !normalized.some((entry) => same(entry.name, snapshot.target.modelId) && same(entry.alias, entry.name)) &&
+    !normalized.some((entry) => same(entry.name, snapshot.target.modelId) && !same(entry.alias, entry.name))
+  ) {
+    normalized.push({ name: snapshot.target.modelId, alias: snapshot.target.modelId });
+  }
+  return { target: snapshot.target, entries: dedupeEntries(normalized) };
+}
+
+function isSameEntries(a: Array<{ name: string; alias: string }>, b: Array<{ name: string; alias: string }>): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function currentDisabledMappingEntries(state: ModelManagementState, targetKey: string): DisabledMapping[] {
+  return collectDisabledMappingsForTarget(state.mapping, targetKey);
+}
+
+function addExplicitIdentityOps(
+  state: ModelManagementState,
+  baselineAlias: string,
+  finalAlias: string,
+  baselineTargets: MappingTargetRef[],
+  selectedTargets: MappingTargetRef[],
+  queueKey: string,
+  out: ModelOp[]
+): void {
+  const selected = new Set(selectedTargets.map(mappingTargetKey));
+  const candidates = new Map<string, MappingTargetRef>();
+  [...baselineTargets, ...selectedTargets].forEach((target) => candidates.set(mappingTargetKey(target), target));
+  candidates.forEach((target, targetKey) => {
+    const identityBefore = same(baselineAlias, target.modelId);
+    const identityAfter = same(finalAlias, target.modelId) && selected.has(targetKey);
+    if (identityAfter && !state.explicitIdentityKeys.has(targetKey)) {
+      out.push({ kind: 'explicitIdentityMark', phase: 'after-backend', queueKey, target: stripTarget(target) });
+    } else if (identityBefore && !selected.has(targetKey) && state.explicitIdentityKeys.has(targetKey)) {
+      out.push({ kind: 'explicitIdentityUnmark', phase: 'after-backend', queueKey, target: stripTarget(target) });
+    }
+  });
+}
 
 export type PlanAccessToggleInput = {
   state: ModelManagementState;
@@ -142,884 +357,304 @@ export type PlanAccessToggleInput = {
 
 export function planAccessToggle(input: PlanAccessToggleInput): ModelOp[] {
   const { state, ref, nextEnabled } = input;
-  const wantExclude = !nextEnabled;
+  const modelDisabled = state.modelDisabled ?? new Map<string, DisabledModelSnapshot>();
   const targetKey = accessEnabledKey(ref);
+  const queueKey = ref.source === 'oauth' ? normalizeProviderKey(ref.channel) : ref.resourceId;
   const ops: ModelOp[] = [];
-  const push = (op: ModelOp) => ops.push(op);
-
   if (ref.source === 'oauth') {
-    planOauthAccessToggle(state, ref, targetKey, wantExclude, push);
+    const channel = normalizeProviderKey(ref.channel);
+    const rules = normalizeOAuthExcludedRules(state.oauthExcludedMap[channel] ?? []);
+    const nextRules = updateOAuthExcludedRule(rules, ref.modelId, !nextEnabled);
+    if (JSON.stringify(rules) !== JSON.stringify(nextRules)) {
+      ops.push({ kind: 'oauthExcludedPatch', phase: 'backend', queueKey, channel, models: nextRules });
+    }
     return ops;
   }
-
-  const resource = state.catalogs.resources.find((r) => r.id === ref.resourceId);
+  const resource = state.catalogs.resources.find((item) => item.id === ref.resourceId);
   if (!resource) return ops;
-
-  if (resource.brand === 'openaiCompatibility') {
-    planOpenAiCatalogToggle(state, resource, ref, targetKey, wantExclude, push);
-  } else {
-    planApiKeyExcludedToggle(state, resource, ref, targetKey, wantExclude, push);
-  }
-  return ops;
-}
-
-function planOauthAccessToggle(
-  state: ModelManagementState,
-  ref: Extract<MappingTargetRef, { source: 'oauth' }>,
-  targetKey: string,
-  wantExclude: boolean,
-  push: (op: ModelOp) => void
-): void {
-  const channel = normalizeProviderKey(ref.channel);
-  const queueKey = channel;
-  if (state.managedExcludeKeys.has(targetKey)) {
-    push({ kind: 'managedExcludeUnmark', phase: 'before-backend', queueKey, key: targetKey });
-  }
-  const entries = state.oauthAliasMap[channel] ?? [];
-  const currentRules = normalizeOAuthExcludedRules(state.oauthExcludedMap[channel] ?? []);
-
-  if (wantExclude) {
-    const bindings = collectMappingsForTarget({
-      modelAlias: { [channel]: entries },
-      resources: [],
-      target: ref,
-    });
-    if (bindings.length) {
-      push({
-        kind: 'mappingSuspendMerge',
-        phase: 'before-backend',
-        queueKey,
-        targetKey,
-        entries: bindings,
-      });
-      const { next } = pruneOauthEntriesForModel(entries, ref.modelId);
-      push({ kind: 'oauthAliasPatch', phase: 'backend', queueKey, channel, entries: next });
-    }
-    const nextRules = updateOAuthExcludedRule(currentRules, ref.modelId, true);
-    push({ kind: 'oauthExcludedPatch', phase: 'backend', queueKey, channel, models: nextRules });
-    return;
-  }
-
-  // 启用：清 exclude，再恢复 alias（恢复数据 take 落 after-backend）
-  const suspended = collectSuspendedBindingsForTarget(state.mapping, targetKey);
-  const nextRules = updateOAuthExcludedRule(currentRules, ref.modelId, false);
-  push({ kind: 'oauthExcludedPatch', phase: 'backend', queueKey, channel, models: nextRules });
-  if (suspended.length) {
-    const { next } = restoreOauthEntries(entries, suspended, channel);
-    push({ kind: 'oauthAliasPatch', phase: 'backend', queueKey, channel, entries: next });
-    push({ kind: 'mappingSuspendTake', phase: 'after-backend', queueKey, targetKey });
-  }
-}
-
-function planApiKeyExcludedToggle(
-  state: ModelManagementState,
-  resource: ProviderResource,
-  ref: Extract<MappingTargetRef, { source: 'apiKey' }>,
-  targetKey: string,
-  wantExclude: boolean,
-  push: (op: ModelOp) => void
-): void {
-  const queueKey = resource.id;
-  const models = readApiKeyModels(resource);
-  const raw = resource.raw as { excludedModels?: string[] };
-  const baseList = stripDisableAllModelsRule(
-    Array.isArray(raw.excludedModels) ? raw.excludedModels : []
-  );
-
-  if (wantExclude) {
-    // 先剪枝 alias（before-backend 捕获绑定），再写 exclude（plan 规则 #2）
-    const bindings = collectMappingsForTarget({
-      modelAlias: {},
-      resources: [resource],
-      target: ref,
-    });
-    if (bindings.length) {
-      push({
-        kind: 'mappingSuspendMerge',
-        phase: 'before-backend',
-        queueKey,
-        targetKey,
-        entries: bindings,
-      });
-      const { next } = pruneApiKeyModelsForModel(models, ref.modelId);
-      push({
-        kind: 'apiKeyModelsPut',
+  if (supportsExcludedModels(resource)) {
+    const raw = resource.raw as { excludedModels?: string[] };
+    const current = stripDisableAllModelsRule(Array.isArray(raw.excludedModels) ? raw.excludedModels : []);
+    const next = toggleApiKeyExcludedList(current, ref.modelId, !nextEnabled);
+    if (JSON.stringify(current) !== JSON.stringify(next)) {
+      ops.push({
+        kind: 'apiKeyExcludedPatch',
         phase: 'backend',
         queueKey,
         resourceId: resource.id,
         brand: resource.brand,
-        models: next,
+        modelsWithoutStar: next,
       });
     }
-    const nextList = toggleApiKeyExcludedList(baseList, ref.modelId, true);
-    push({
-      kind: 'apiKeyExcludedPatch',
-      phase: 'backend',
-      queueKey,
-      resourceId: resource.id,
-      brand: resource.brand,
-      modelsWithoutStar: nextList,
-    });
-    return;
+    return ops;
   }
 
-  // 启用：清 exclude，再恢复 alias
-  const suspended = collectSuspendedBindingsForTarget(state.mapping, targetKey);
-  const nextList = toggleApiKeyExcludedList(baseList, ref.modelId, false);
-  push({
-    kind: 'apiKeyExcludedPatch',
-    phase: 'backend',
-    queueKey,
-    resourceId: resource.id,
-    brand: resource.brand,
-    modelsWithoutStar: nextList,
-  });
-  if (suspended.length) {
-    const { next } = restoreApiKeyModels(models, suspended, resource.id);
-    push({
-      kind: 'apiKeyModelsPut',
-      phase: 'backend',
-      queueKey,
-      resourceId: resource.id,
-      brand: resource.brand,
-      models: next,
-    });
-    push({ kind: 'mappingSuspendTake', phase: 'after-backend', queueKey, targetKey });
-  }
-}
-
-function planOpenAiCatalogToggle(
-  state: ModelManagementState,
-  resource: ProviderResource,
-  ref: Extract<MappingTargetRef, { source: 'apiKey' }>,
-  targetKey: string,
-  wantExclude: boolean,
-  push: (op: ModelOp) => void
-): void {
-  const queueKey = resource.id;
   const models = readApiKeyModels(resource);
-
-  if (wantExclude) {
-    // 先捕获映射绑定（before-backend），再把「剪枝别名 + 摘除条目」合并为一次 models PUT
-    const bindings = collectMappingsForTarget({
-      modelAlias: {},
-      resources: [resource],
-      target: ref,
-    });
-    if (bindings.length) {
-      push({
-        kind: 'mappingSuspendMerge',
-        phase: 'before-backend',
-        queueKey,
-        targetKey,
-        entries: bindings,
-      });
-    }
-    const { next: pruned } = pruneApiKeyModelsForModel(models, ref.modelId);
-    const { next: finalModels, removed } = removeModelFromCatalog(pruned, ref.modelId);
-    const bareEntry = removed.length > 0 ? removed : ([{ name: ref.modelId }] as ModelAlias[]);
-    push({
-      kind: 'catalogSuspendMerge',
+  if (!nextEnabled) {
+    const removed = modelEntriesForTarget(models, ref.modelId);
+    if (!removed.length) return ops;
+    ops.push({
+      kind: 'modelDisabledPut',
       phase: 'before-backend',
       queueKey,
-      resourceId: resource.id,
-      modelId: ref.modelId,
-      entries: bareEntry,
+      targetKey,
+      snapshot: { target: stripTarget(ref), entries: removed },
     });
-    push({
+    ops.push({
       kind: 'apiKeyModelsPut',
       phase: 'backend',
       queueKey,
       resourceId: resource.id,
       brand: resource.brand,
-      models: finalModels,
+      models: models.filter((entry) => !same(entry.name, ref.modelId)),
     });
-    return;
-  }
-
-  // 启用：合并「恢复条目 + 恢复别名」为一次 models PUT；take 落 after-backend
-  const suspended = collectSuspendedBindingsForTarget(state.mapping, targetKey);
-  const catalogEntries = state.access.byKey.get(targetKey)?.suspendedCatalogEntries;
-  const toRestore =
-    catalogEntries && catalogEntries.length
-      ? catalogEntries
-      : ([{ name: ref.modelId }] as ModelAlias[]);
-  const { next: withEntry } = restoreModelToCatalog(models, toRestore);
-  const { next: finalModels } = restoreApiKeyModels(withEntry, suspended, resource.id);
-  push({
-    kind: 'apiKeyModelsPut',
-    phase: 'backend',
-    queueKey,
-    resourceId: resource.id,
-    brand: resource.brand,
-    models: finalModels,
-  });
-  push({
-    kind: 'catalogSuspendTake',
-    phase: 'after-backend',
-    queueKey,
-    resourceId: resource.id,
-    modelId: ref.modelId,
-  });
-  if (suspended.length) {
-    push({ kind: 'mappingSuspendTake', phase: 'after-backend', queueKey, targetKey });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 子规划器 2/3/4：alias save / alias delete / provider 表单 deltas
-// （Phase 3-5 接线时实现；此处占位以保证 Phase 1 类型完整、可编译）
-// ---------------------------------------------------------------------------
-
-export type AliasDraft = {
-  /** 最终写入的 alias（aliasLiteral || baselineAlias） */
-  alias: string;
-  /** toAliasKey(baselineAlias || aliasLiteral)；用于查找后端已配置的 channel/resource */
-  previousAliasKey: string | null;
-  /** 编辑前的旧 alias 字面量；创建时为 '' */
-  baselineAlias: string;
-  isEditing: boolean;
-  selectedTargets: MappingTargetRef[];
-  /** 本地挂起目标（含 fork/forceMapping，保存时按 finalAlias 重写 alias 字段） */
-  suspendedTargets: SuspendedMapping[];
-};
-
-export type PlanAliasSaveResult = {
-  ops: ModelOp[];
-  /** identity-access 同步中走 fork 路径的原名数（仅 OAuth） */
-  forked: number;
-  /** identity-access 同步中走 excluded/catalog 路径的原名数 */
-  excluded: number;
-};
-
-function groupOauthByChannel(targets: MappingTargetRef[]): Map<string, string[]> {
-  const map = new Map<string, string[]>();
-  targets.forEach((t) => {
-    if (t.source !== 'oauth') return;
-    const channel = normalizeProviderKey(t.channel);
-    if (!channel) return;
-    const list = map.get(channel) ?? [];
-    if (!list.some((id) => lower(id) === lower(t.modelId))) list.push(t.modelId);
-    map.set(channel, list);
-  });
-  return map;
-}
-
-function groupApiKeyByResource(targets: MappingTargetRef[]): Map<string, string[]> {
-  const map = new Map<string, string[]>();
-  targets.forEach((t) => {
-    if (t.source !== 'apiKey') return;
-    const list = map.get(t.resourceId) ?? [];
-    if (!list.some((id) => lower(id) === lower(t.modelId))) list.push(t.modelId);
-    map.set(t.resourceId, list);
-  });
-  return map;
-}
-
-/**
- * 子规划器 2：保存映射草稿。
- *
- * 关键不变量（计划最高风险点 #3）：每个 oauth channel / apiKey resource 的「清旧 + 写新 + identity 同步」
- * 必须合并为一次 oauthAliasPatch / apiKeyModelsPut，绝不能拆成两次（中间空状态会触发后端 DELETE）。
- * 做法：先在内存 working 数组上应用 main-save（清旧+写新），再在其上应用 identity-access（fork/exclude/catalog），
- * 最后只发一次合并后的 patch。identity 未触及的 channel/resource 才单独发 main-save patch。
- *
- * phase 语义与 planAccessToggle 一致；forked/excluded 在 plan 时确定（页面保证 oauth 已支持，不走 unsupported 分支）。
- */
-export function planAliasSave(input: {
-  state: ModelManagementState;
-  draft: AliasDraft;
-}): PlanAliasSaveResult {
-  const { state, draft } = input;
-  const ops: ModelOp[] = [];
-  const push = (op: ModelOp) => ops.push(op);
-  let forked = 0;
-  let excluded = 0;
-
-  const finalAlias = draft.alias.trim();
-  const prevAliasKey = draft.previousAliasKey;
-  const baselineAlias = draft.baselineAlias;
-  const isEditing = draft.isEditing;
-  const isRename =
-    isEditing && Boolean(baselineAlias) && toAliasKey(baselineAlias) !== toAliasKey(finalAlias);
-
-  const baselineChannel =
-    isEditing && prevAliasKey ? state.mapping.byAliasKey.get(prevAliasKey) : undefined;
-  const baselineTargets = baselineChannel ? baselineChannel.targets : [];
-
-  const persistableSelected = filterPersistableMappingTargets(finalAlias, draft.selectedTargets);
-  const persistableBaseline = filterPersistableMappingTargets(
-    baselineAlias || finalAlias,
-    baselineTargets
-  );
-
-  const selectedKeys = new Set(draft.selectedTargets.map(mappingTargetKey));
-  const suspendedKeys = new Set(draft.suspendedTargets.map((s) => mappingTargetKey(s.target)));
-  const claimedKeys = new Set<string>([...selectedKeys, ...suspendedKeys]);
-  // abandoned 区分「原已渠道禁用（suspended）」与「原活跃」：
-  // 前者须继续禁用（走 suspendedTargets -> toDisable，保持 excludedModels 排除 / catalog 移除），
-  // 不能走 abandonedTargets -> toClearExclude 把 claude apikey 的 excludedModels 摘掉而复活成裸条目。
-  const abandonedSuspended: MappingTargetRef[] = [];
-  const abandonedActive: MappingTargetRef[] = [];
-  baselineTargets.forEach((t) => {
-    if (claimedKeys.has(mappingTargetKey(t))) return;
-    if (t.suspended) abandonedSuspended.push(t);
-    else abandonedActive.push(t);
-  });
-
-  const fullyDeleted = draft.selectedTargets.length === 0 && draft.suspendedTargets.length === 0;
-
-  const nextPlan = planAliasTargetAssignments(persistableSelected, finalAlias);
-  const baselinePlan = planAliasTargetAssignments(persistableBaseline, baselineAlias || finalAlias);
-
-  // --- main-save working 数组 ---
-  const mainOauthChannels = new Set<string>([
-    ...nextPlan.oauthByChannel.keys(),
-    ...baselinePlan.oauthByChannel.keys(),
-    ...(prevAliasKey ? collectConfiguredOauthChannelsForAlias(state.oauthAliasMap, prevAliasKey) : []),
-  ]);
-  const workingOauth = new Map<string, OAuthModelAliasEntry[]>();
-  mainOauthChannels.forEach((ch) => {
-    let entries = state.oauthAliasMap[ch] ?? [];
-    if (isRename) {
-      entries = applyOauthAliasTargetChanges({ entries, alias: baselineAlias, nextModelIds: [] });
-    }
-    const nextIds = nextPlan.oauthByChannel.get(ch) ?? [];
-    entries = applyOauthAliasTargetChanges({ entries, alias: finalAlias, nextModelIds: nextIds });
-    workingOauth.set(ch, entries);
-  });
-
-  const mainApiKeyResources = new Set<string>([
-    ...nextPlan.apiKeyByResource.keys(),
-    ...baselinePlan.apiKeyByResource.keys(),
-    ...(prevAliasKey
-      ? collectConfiguredApiKeyResourceIdsForAlias(state.catalogs.resources, prevAliasKey)
-      : []),
-  ]);
-  const workingModels = new Map<string, ModelAlias[]>();
-  mainApiKeyResources.forEach((rid) => {
-    const resource = state.catalogs.resources.find((r) => r.id === rid);
-    if (!resource) return;
-    let models = readApiKeyModels(resource);
-    const prevIds = baselinePlan.apiKeyByResource.get(rid)?.modelIds ?? [];
-    if (isRename) {
-      models = applyApiKeyModelAliasChanges({
-        models,
-        alias: baselineAlias,
-        nextModelIds: [],
-        previousModelIds: prevIds,
-        previousAliasKey: prevAliasKey ?? undefined,
-      });
-    }
-    const nextIds = nextPlan.apiKeyByResource.get(rid)?.modelIds ?? [];
-    models = applyApiKeyModelAliasChanges({
-      models,
-      alias: finalAlias,
-      nextModelIds: nextIds,
-      previousModelIds: prevIds,
-      previousAliasKey: prevAliasKey ?? undefined,
-    });
-    workingModels.set(rid, models);
-  });
-
-  // --- identity-access 同步（在 working 数组上合并） ---
-  const { toEnable, toDisable, toClearExclude } = partitionIdentityAccessTargets({
-    alias: finalAlias,
-    selectedTargets: draft.selectedTargets,
-    suspendedTargets: [
-      ...draft.suspendedTargets.map((s) => ({ target: s.target })),
-      ...abandonedSuspended.map((t) => ({ target: t })),
-    ],
-    abandonedTargets: abandonedActive,
-  });
-
-  const identityOauthTouched = new Set<string>();
-  const oauthDisable = groupOauthByChannel(toDisable);
-  const oauthEnable = groupOauthByChannel(toEnable);
-  const oauthClear = groupOauthByChannel(toClearExclude);
-  new Set([...oauthDisable.keys(), ...oauthEnable.keys(), ...oauthClear.keys()]).forEach((ch) => {
-    let entries = workingOauth.get(ch) ?? state.oauthAliasMap[ch] ?? [];
-    let rules = normalizeOAuthExcludedRules(state.oauthExcludedMap[ch] ?? []);
-    let aliasDirty = false;
-    let excludedDirty = false;
-    const managedMark: string[] = [];
-    const managedUnmark: string[] = [];
-
-    (oauthDisable.get(ch) ?? []).forEach((modelId) => {
-      const plan = planOauthIdentityDisable(entries, modelId);
-      if (plan.changed) {
-        entries = plan.next;
-        aliasDirty = true;
-      }
-      if (plan.usedFork) {
-        forked += 1;
-        managedUnmark.push(accessEnabledKey({ source: 'oauth', channel: ch, modelId }));
-        const before = rules.length;
-        rules = updateOAuthExcludedRule(rules, modelId, false);
-        if (rules.length < before) excludedDirty = true;
-        return;
-      }
-      rules = updateOAuthExcludedRule(rules, modelId, true);
-      excludedDirty = true;
-      excluded += 1;
-      managedMark.push(accessEnabledKey({ source: 'oauth', channel: ch, modelId }));
-    });
-    (oauthEnable.get(ch) ?? []).forEach((modelId) => {
-      const plan = planOauthIdentityEnable(entries, modelId);
-      if (plan.changed) {
-        entries = plan.next;
-        aliasDirty = true;
-      }
-      const before = rules.length;
-      rules = updateOAuthExcludedRule(rules, modelId, false);
-      if (rules.length < before) excludedDirty = true;
-      managedUnmark.push(accessEnabledKey({ source: 'oauth', channel: ch, modelId }));
-    });
-    (oauthClear.get(ch) ?? []).forEach((modelId) => {
-      if ((oauthEnable.get(ch) ?? []).some((id) => lower(id) === lower(modelId))) return;
-      const before = rules.length;
-      rules = updateOAuthExcludedRule(rules, modelId, false);
-      if (rules.length < before) excludedDirty = true;
-      managedUnmark.push(accessEnabledKey({ source: 'oauth', channel: ch, modelId }));
-    });
-
-    if (aliasDirty) {
-      push({ kind: 'oauthAliasPatch', phase: 'backend', queueKey: ch, channel: ch, entries });
-      identityOauthTouched.add(ch);
-      workingOauth.set(ch, entries);
-    }
-    if (excludedDirty) {
-      push({ kind: 'oauthExcludedPatch', phase: 'backend', queueKey: ch, channel: ch, models: rules });
-    }
-    managedMark.forEach((k) =>
-      push({ kind: 'managedExcludeMark', phase: 'after-backend', queueKey: ch, key: k })
-    );
-    managedUnmark.forEach((k) =>
-      push({ kind: 'managedExcludeUnmark', phase: 'after-backend', queueKey: ch, key: k })
-    );
-  });
-
-  // main-save oauthAliasPatch：仅 identity 未触及的 channel
-  mainOauthChannels.forEach((ch) => {
-    if (identityOauthTouched.has(ch)) return;
-    const entries = workingOauth.get(ch) ?? [];
-    const initial = state.oauthAliasMap[ch] ?? [];
-    const nextIds = nextPlan.oauthByChannel.get(ch) ?? [];
-    if (!initial.length && !nextIds.length) return;
-    push({ kind: 'oauthAliasPatch', phase: 'backend', queueKey: ch, channel: ch, entries });
-  });
-
-  // API Key identity + main
-  const identityOpenAiTouched = new Set<string>();
-  const apiDisable = groupApiKeyByResource(toDisable);
-  const apiEnableIdentity = groupApiKeyByResource(toEnable);
-  const apiEnableClear = groupApiKeyByResource(toClearExclude);
-  const apiEnable = groupApiKeyByResource([...toEnable, ...toClearExclude]);
-  new Set([...apiDisable.keys(), ...apiEnable.keys()]).forEach((rid) => {
-    const resource = state.catalogs.resources.find((r) => r.id === rid);
-    if (!resource) return;
-    const disableIds = apiDisable.get(rid) ?? [];
-    const enableIds = apiEnable.get(rid) ?? [];
-
-    if (resource.brand === 'openaiCompatibility') {
-      let models = workingModels.get(rid) ?? readApiKeyModels(resource);
-      let dirty = false;
-      const managedMark: string[] = [];
-      const managedUnmark: string[] = [];
-      disableIds.forEach((modelId) => {
-        const { next, removed } = removeModelFromCatalog(models, modelId);
-        const entries = removed.length > 0 ? removed : ([{ name: modelId }] as ModelAlias[]);
-        push({
-          kind: 'catalogSuspendMerge',
-          phase: 'before-backend',
-          queueKey: rid,
-          resourceId: rid,
-          modelId,
-          entries,
-        });
-        managedMark.push(
-          accessEnabledKey({ source: 'apiKey', resourceId: rid, brand: resource.brand, modelId })
-        );
-        models = next;
-        dirty = true;
-        excluded += 1;
-      });
-      const accessKey = (modelId: string) =>
-        accessEnabledKey({ source: 'apiKey', resourceId: rid, brand: resource.brand, modelId });
-      // identity 重新启用：恢复挂起的原名条目（重新暴露原名）
-      const identityIds = new Set((apiEnableIdentity.get(rid) ?? []).map((id) => lower(id)));
-      (apiEnableIdentity.get(rid) ?? []).forEach((modelId) => {
-        const suspendedEntries = state.access.byKey.get(accessKey(modelId))?.suspendedCatalogEntries;
-        const toRestore =
-          suspendedEntries && suspendedEntries.length
-            ? suspendedEntries
-            : ([{ name: modelId }] as ModelAlias[]);
-        const { next } = restoreModelToCatalog(models, toRestore);
-        models = next;
-        managedUnmark.push(accessKey(modelId));
-        dirty = true;
-        push({
-          kind: 'catalogSuspendTake',
-          phase: 'after-backend',
-          queueKey: rid,
-          resourceId: rid,
-          modelId,
-        });
-      });
-      // 跨名/abandoned：catalog 已由 main-save 写入手动 alias；仅清受管 exclude + 挂起存储。
-      // 不恢复旧条目，否则会回填原名/旧别名，导致「自动渠道不显示但原名仍出现在模型列表」。
-      (apiEnableClear.get(rid) ?? []).forEach((modelId) => {
-        if (identityIds.has(lower(modelId))) return; // 已在 identity 恢复路径处理
-        managedUnmark.push(accessKey(modelId));
-        push({
-          kind: 'catalogSuspendTake',
-          phase: 'after-backend',
-          queueKey: rid,
-          resourceId: rid,
-          modelId,
-        });
-      });
-      if (dirty) {
-        push({
-          kind: 'apiKeyModelsPut',
-          phase: 'backend',
-          queueKey: rid,
-          resourceId: rid,
-          brand: resource.brand,
-          models,
-        });
-        identityOpenAiTouched.add(rid);
-        workingModels.set(rid, models);
-      }
-      managedMark.forEach((k) =>
-        push({ kind: 'managedExcludeMark', phase: 'after-backend', queueKey: rid, key: k })
-      );
-      managedUnmark.forEach((k) =>
-        push({ kind: 'managedExcludeUnmark', phase: 'after-backend', queueKey: rid, key: k })
-      );
-      return;
-    }
-
-    const raw = resource.raw as { excludedModels?: string[] };
-    let list = stripDisableAllModelsRule(raw.excludedModels);
-    let excludedDirty = false;
-    const managedMark: string[] = [];
-    const managedUnmark: string[] = [];
-    disableIds.forEach((modelId) => {
-      list = toggleApiKeyExcludedList(list, modelId, true);
-      managedMark.push(
-        accessEnabledKey({ source: 'apiKey', resourceId: rid, brand: resource.brand, modelId })
-      );
-      excludedDirty = true;
-      excluded += 1;
-    });
-    enableIds.forEach((modelId) => {
-      const next = toggleApiKeyExcludedList(list, modelId, false);
-      if (next.length !== list.length) excludedDirty = true;
-      list = next;
-      managedUnmark.push(
-        accessEnabledKey({ source: 'apiKey', resourceId: rid, brand: resource.brand, modelId })
-      );
-    });
-    if (excludedDirty) {
-      push({
-        kind: 'apiKeyExcludedPatch',
-        phase: 'backend',
-        queueKey: rid,
-        resourceId: rid,
-        brand: resource.brand,
-        modelsWithoutStar: list,
-      });
-    }
-    managedMark.forEach((k) =>
-      push({ kind: 'managedExcludeMark', phase: 'after-backend', queueKey: rid, key: k })
-    );
-    managedUnmark.forEach((k) =>
-      push({ kind: 'managedExcludeUnmark', phase: 'after-backend', queueKey: rid, key: k })
-    );
-  });
-
-  // main-save apiKeyModelsPut：仅 identity-openai 未触及的资源（非 openai 资源 identity 用 excludedModels 独立字段，不冲突）
-  mainApiKeyResources.forEach((rid) => {
-    if (identityOpenAiTouched.has(rid)) return;
-    const resource = state.catalogs.resources.find((r) => r.id === rid);
-    if (!resource) return;
-    if (resource.brand === 'openaiCompatibility') {
-      const models = workingModels.get(rid) ?? [];
-      const initial = readApiKeyModels(resource);
-      const nextIds = nextPlan.apiKeyByResource.get(rid)?.modelIds ?? [];
-      if (!initial.length && !nextIds.length) return;
-      push({
-        kind: 'apiKeyModelsPut',
-        phase: 'backend',
-        queueKey: rid,
-        resourceId: rid,
-        brand: resource.brand,
-        models,
-      });
-    } else {
-      const models = workingModels.get(rid) ?? [];
-      push({
-        kind: 'apiKeyModelsPut',
-        phase: 'backend',
-        queueKey: rid,
-        resourceId: rid,
-        brand: resource.brand,
-        models,
-      });
-    }
-  });
-
-  // --- 认领 / 取消认领 ---
-  const finalAliasKey = toAliasKey(finalAlias);
-  if (finalAliasKey) {
-    const claimQueue = `alias:${finalAliasKey}`;
-    if (fullyDeleted) {
-      push({ kind: 'mappingUnclaim', phase: 'after-backend', queueKey: claimQueue, aliasKey: finalAliasKey });
-    } else {
-      push({ kind: 'mappingClaim', phase: 'after-backend', queueKey: claimQueue, aliasKey: finalAliasKey });
-    }
-  }
-
-  // --- 挂起标签同步（syncSuspendedTags 等价）：清旧名 / 清新名(改名) / 按新名 merge ---
-  const suspendQueue = `alias-sync:${finalAliasKey}`;
-  if (isEditing && baselineAlias) {
-    push({
-      kind: 'mappingSuspendClearAlias',
-      phase: 'before-backend',
-      queueKey: suspendQueue,
-      aliasKey: toAliasKey(baselineAlias),
-    });
-  }
-  if (finalAlias && toAliasKey(finalAlias) !== toAliasKey(baselineAlias || '')) {
-    push({
-      kind: 'mappingSuspendClearAlias',
-      phase: 'before-backend',
-      queueKey: suspendQueue,
-      aliasKey: finalAliasKey,
-    });
-  }
-  if (draft.suspendedTargets.length > 0 && finalAlias) {
-    draft.suspendedTargets.forEach((entry) => {
-      const targetKey = accessEnabledKey(entry.target);
-      push({
-        kind: 'mappingSuspendMerge',
-        phase: 'before-backend',
-        queueKey: suspendQueue,
-        targetKey,
-        entries: [{ ...entry, alias: finalAlias }],
-      });
-    });
-  }
-
-  return { ops, forked, excluded };
-}
-
-export function planAliasDelete(input: {
-  state: ModelManagementState;
-  aliasKey: string;
-}): ModelOp[] {
-  const { state, aliasKey } = input;
-  const channel = state.mapping.byAliasKey.get(aliasKey);
-  if (!channel) return [];
-  const alias = channel.alias;
-  const ops: ModelOp[] = [];
-  const push = (op: ModelOp) => ops.push(op);
-
-  // 1. 清挂起 + 清认领（before-backend，独立队列）
-  const aliasQueue = `alias:${aliasKey}`;
-  push({ kind: 'mappingSuspendClearAlias', phase: 'before-backend', queueKey: aliasQueue, aliasKey });
-  push({ kind: 'mappingUnclaim', phase: 'before-backend', queueKey: aliasQueue, aliasKey });
-
-  // 2. 从后端 oauth alias map 摘掉该 alias
-  collectConfiguredOauthChannelsForAlias(state.oauthAliasMap, aliasKey).forEach((channelName) => {
-    const entries = state.oauthAliasMap[channelName] ?? [];
-    const next = applyOauthAliasTargetChanges({ entries, alias, nextModelIds: [] });
-    push({
-      kind: 'oauthAliasPatch',
-      phase: 'backend',
-      queueKey: channelName,
-      channel: channelName,
-      entries: next,
-    });
-  });
-
-  // 3. 从后端 apiKey models[] 摘掉该 alias（保留原名条目）
-  collectConfiguredApiKeyResourceIdsForAlias(state.catalogs.resources, aliasKey).forEach((resourceId) => {
-    const resource = state.catalogs.resources.find((r) => r.id === resourceId);
-    if (!resource) return;
-    const models = readApiKeyModels(resource);
-    const previousModelIds = models
-      .filter((m) => {
-        const name = String(m.name ?? '').trim();
-        const a = String(m.alias ?? '').trim();
-        return name && a && toAliasKey(a) === aliasKey && toAliasKey(a) !== name.trim().toLowerCase();
-      })
-      .map((m) => String(m.name).trim());
-    const nextModels = applyApiKeyModelAliasChanges({
-      models,
-      alias,
-      nextModelIds: [],
-      previousModelIds,
-    });
-    push({
+  } else {
+    const snapshot = modelDisabled.get(targetKey);
+    if (!snapshot) return ops;
+    ops.push({
       kind: 'apiKeyModelsPut',
       phase: 'backend',
-      queueKey: resourceId,
-      resourceId,
+      queueKey,
+      resourceId: resource.id,
       brand: resource.brand,
-      models: nextModels,
+      models: dedupeEntries([...models, ...(snapshot.entries as ModelAlias[])]),
     });
-  });
-
-  // 4. 曾持有的目标恢复原名入口：活跃目标 re-expose 原名（toClearExclude）；
-  //    渠道内挂起（已禁用）目标必须保持禁用（toDisable：excludedModels 仍排除 / catalog 仍移除），
-  //    不能因删除 alias 而复活成可调用的裸条目（claude apikey 的 excludedModels 会被 toClearExclude 摘掉）。
-  const heldActive: MappingTargetRef[] = [];
-  const heldSuspended: MappingTargetRef[] = [];
-  const seen = new Set<string>();
-  channel.targets.forEach((t) => {
-    const ref: MappingTargetRef =
-      t.source === 'oauth'
-        ? { source: 'oauth', channel: t.channel, modelId: t.modelId }
-        : { source: 'apiKey', resourceId: t.resourceId, brand: t.brand, modelId: t.modelId };
-    const key = mappingTargetKey(ref);
-    if (seen.has(key)) return;
-    seen.add(key);
-    if (t.suspended) heldSuspended.push(ref);
-    else heldActive.push(ref);
-  });
-  if (heldActive.length || heldSuspended.length) {
-    ops.push(
-      ...planIdentityAccessSync({
-        state,
-        alias,
-        selectedTargets: [],
-        suspendedTargets: heldSuspended,
-        abandonedTargets: heldActive,
-      })
-    );
+    ops.push({ kind: 'modelDisabledTake', phase: 'after-backend', queueKey, target: stripTarget(ref) });
   }
   return ops;
 }
 
-export type ProviderFormDelta = {
-  ref: MappingTargetRef;
-  nextEnabled: boolean;
+export type AliasDraft = {
+  alias: string;
+  previousAliasKey: string | null;
+  baselineAlias: string;
+  isEditing: boolean;
+  selectedTargets: MappingTargetRef[];
+  /** Exact non-identity bindings that should remain locally disabled. */
+  disabledTargets: DisabledMapping[];
+  /** Kept as an input compatibility alias for older callers during rollout. */
+  suspendedTargets?: DisabledMapping[];
 };
 
-/**
- * 计算模块（纯函数）：AI 提供商页表单保存产生的模型启停 delta -> 映射剪枝/恢复 ops。
- *
- * 泛化自 useProviderWorkbench.syncMappingsAfterFormSave（impure）。与 planAccessToggle 的
- * 关键区别：表单保存本身已写 excludedModels / models[]（原生启停由 buildProviderKeyConfig /
- * applyOpenAICatalogSuspendOnSave 完成），这里只负责映射绑定的剪枝（禁用）/ 恢复（启用）
- * + mappingSuspend 存取，不重复写 exclude / catalog / managedExclude。
- *
- * `resource` 为 workbench 捕获的 provider 资源（apiKey models[] 读取来源，匹配旧实现
- * pruneMappingsForDisabledTarget / restoreMappingsForEnabledTarget 接收 resources: [resource]）；
- * oauth entries 取自 state.oauthAliasMap；挂起绑定取自 state.mapping。
- */
+export type PlanAliasSaveResult = { ops: ModelOp[]; forked: number; excluded: number };
+
+function allTargetsForAlias(state: ModelManagementState, aliasKey: string): MappingTargetRef[] {
+  return (state.mapping.byAliasKey.get(aliasKey)?.targets ?? []).map(stripTarget);
+}
+
+function sourceKeysForTargets(targets: MappingTargetRef[]): Set<string> {
+  return new Set(
+    targets.map((target) =>
+      target.source === 'oauth' ? `oauth:${normalizeProviderKey(target.channel)}` : `apiKey:${target.resourceId}`
+    )
+  );
+}
+
+function targetQueueKey(target: MappingTargetRef): string {
+  return target.source === 'oauth'
+    ? normalizeProviderKey(target.channel)
+    : target.resourceId;
+}
+
+function planAliasBackendForSource(
+  state: ModelManagementState,
+  finalAlias: string,
+  baselineAlias: string,
+  targets: MappingTargetRef[],
+  disabledKeys: Set<string>,
+  explicitIdentityKeys: Set<string>,
+  out: ModelOp[]
+): void {
+  const aliasNames = baselineAlias && !same(baselineAlias, finalAlias)
+    ? [baselineAlias, finalAlias]
+    : [finalAlias];
+  const selectedBySource = new Map<string, MappingTargetRef[]>();
+  targets.forEach((target) => {
+    const sourceKey = target.source === 'oauth'
+      ? `oauth:${normalizeProviderKey(target.channel)}`
+      : `apiKey:${target.resourceId}`;
+    const list = selectedBySource.get(sourceKey) ?? [];
+    list.push(target);
+    selectedBySource.set(sourceKey, list);
+  });
+  const sourceKeys = new Set<string>([
+    ...sourceKeysForTargets(targets),
+    ...sourceKeysForTargets(allTargetsForAlias(state, toAliasKey(baselineAlias))),
+  ]);
+
+  sourceKeys.forEach((sourceKey) => {
+    if (sourceKey.startsWith('oauth:')) {
+      const channel = sourceKey.slice('oauth:'.length);
+      let entries = state.oauthAliasMap[channel] ?? [];
+      entries = removeAliases(entries, aliasNames);
+      entries = upsertAliasBindings(entries, finalAlias, selectedBySource.get(sourceKey) ?? [], disabledKeys);
+      const modelIds = state.catalogs.oauthModels[channel]?.map((model) => model.id) ?? [];
+      entries = normalizeOauthIdentityEntries(entries, modelIds, explicitIdentityKeys, channel);
+      if (JSON.stringify(entries) !== JSON.stringify(state.oauthAliasMap[channel] ?? [])) {
+        out.push({ kind: 'oauthAliasPatch', phase: 'backend', queueKey: channel, channel, entries });
+      }
+      return;
+    }
+
+    const resourceId = sourceKey.slice('apiKey:'.length);
+    const resource = state.catalogs.resources.find((item) => item.id === resourceId);
+    if (!resource || !supportsExcludedModels(resource)) {
+      // A catalog-disabled model has no backend entry; its snapshot is handled below.
+      if (!resource) return;
+      let models = readApiKeyModels(resource);
+      models = upsertApiKeyBindings(models, finalAlias, selectedBySource.get(sourceKey) ?? [], disabledKeys);
+      models = normalizeApiKeyIdentityEntries(models, resource, explicitIdentityKeys);
+      if (JSON.stringify(models) !== JSON.stringify(readApiKeyModels(resource))) {
+        out.push({ kind: 'apiKeyModelsPut', phase: 'backend', queueKey: resourceId, resourceId, brand: resource.brand, models });
+      }
+      return;
+    }
+    let models = readApiKeyModels(resource);
+    models = upsertApiKeyBindings(models, finalAlias, selectedBySource.get(sourceKey) ?? [], disabledKeys);
+    models = normalizeApiKeyIdentityEntries(models, resource, explicitIdentityKeys);
+    if (JSON.stringify(models) !== JSON.stringify(readApiKeyModels(resource))) {
+      out.push({ kind: 'apiKeyModelsPut', phase: 'backend', queueKey: resourceId, resourceId, brand: resource.brand, models });
+    }
+  });
+}
+
+export function planAliasSave(input: { state: ModelManagementState; draft: AliasDraft }): PlanAliasSaveResult {
+  const { state, draft } = input;
+  const modelDisabled = state.modelDisabled ?? new Map<string, DisabledModelSnapshot>();
+  const finalAlias = draft.alias.trim();
+  const baselineAlias = draft.baselineAlias.trim();
+  if (!finalAlias) return { ops: [], forked: 0, excluded: 0 };
+  const baselineAliasKey = toAliasKey(baselineAlias);
+  const baselineTargets = baselineAliasKey ? allTargetsForAlias(state, baselineAliasKey) : [];
+  const selectedTargets = draft.selectedTargets.map(stripTarget);
+  const disabledTargets = draft.disabledTargets ?? draft.suspendedTargets ?? [];
+  const disabledKeys = new Set(disabledTargets.map((entry) => mappingTargetKey(entry.target)));
+  const selectedKeys = new Set(selectedTargets.map(mappingTargetKey));
+  const ops: ModelOp[] = [];
+
+  const allAffected = new Map<string, MappingTargetRef>();
+  [...baselineTargets, ...selectedTargets, ...disabledTargets.map((entry) => entry.target)].forEach((target) => {
+    allAffected.set(mappingTargetKey(target), target);
+  });
+
+  const explicitIdentityKeys = new Set(state.explicitIdentityKeys);
+  allAffected.forEach((target, targetKey) => {
+    if (same(finalAlias, target.modelId) && selectedKeys.has(targetKey)) explicitIdentityKeys.add(targetKey);
+    if (same(baselineAlias, target.modelId) && !selectedKeys.has(targetKey)) explicitIdentityKeys.delete(targetKey);
+  });
+
+  // Active source bindings are written once per source.  Model-disabled targets
+  // are omitted from the backend and updated in their v2 snapshots below.
+  planAliasBackendForSource(
+    state,
+    finalAlias,
+    baselineAlias,
+    selectedTargets,
+    new Set([...disabledKeys, ...Array.from(modelDisabled.keys())]),
+    explicitIdentityKeys,
+    ops
+  );
+
+  // Update snapshots even when the model is currently disabled; this is the
+  // important "edit while disabled, restore latest mapping" behavior.
+  // The state exposes disabled snapshots through access entries.  Build a
+  // snapshot from each affected disabled access target and preserve all aliases.
+  allAffected.forEach((_target, targetKey) => {
+    const snapshot = modelDisabled.get(targetKey);
+    if (!snapshot?.entries.length) return;
+    const next = snapshotWithAlias(snapshot, baselineAlias, finalAlias, selectedKeys, disabledKeys);
+    if (!isSameEntries(snapshot.entries as Array<{ name: string; alias: string }>, next.entries as Array<{ name: string; alias: string }>)) {
+      ops.push({ kind: 'modelDisabledPut', phase: 'after-backend', queueKey: targetQueueKey(next.target), targetKey, snapshot: next });
+    }
+  });
+
+  // Non-identity mapping disables are exact alias/target records.  Active
+  // selection restores the record; remaining disabled records are rewritten.
+  const disabledByTarget = new Map<string, DisabledMapping[]>();
+  disabledTargets.forEach((entry) => {
+    if (same(entry.alias, finalAlias)) {
+      const key = accessEnabledKey(entry.target);
+      const list = disabledByTarget.get(key) ?? [];
+      list.push({ ...entry, alias: finalAlias });
+      disabledByTarget.set(key, list);
+    }
+  });
+  baselineTargets.forEach((target) => {
+    const targetKey = mappingTargetKey(target);
+    if (selectedKeys.has(targetKey) || target.source === 'oauth' && same(finalAlias, target.modelId)) return;
+    if (target.source === 'oauth' && same(finalAlias, target.modelId)) return;
+    if (disabledKeys.has(targetKey)) return;
+    if (target.source === 'oauth' || target.source === 'apiKey') {
+      const existing = currentDisabledMappingEntries(state, accessEnabledKey(target));
+      if (existing.some((entry) => same(entry.alias, baselineAlias))) return;
+      disabledByTarget.set(accessEnabledKey(target), [{ alias: finalAlias, target }]);
+    }
+  });
+  disabledByTarget.forEach((entries, targetKey) => {
+    if (entries.length) {
+      ops.push({ kind: 'mappingDisabledMerge', phase: 'before-backend', queueKey: targetQueueKey(entries[0].target), targetKey, entries });
+    }
+  });
+  const currentDisabled = new Map<string, DisabledMapping[]>();
+  state.mapping.byAliasKey.forEach((channel) => {
+    channel.targets.forEach((target) => {
+      if (!target.suspended || target.disabledReason !== 'mapping') return;
+      const targetKey = accessEnabledKey(target);
+      const desired = disabledTargets.some((entry) => same(entry.alias, finalAlias) && mappingTargetKey(entry.target) === mappingTargetKey(target));
+      if (!desired && same(channel.alias, baselineAlias)) {
+        ops.push({ kind: 'mappingDisabledTake', phase: 'after-backend', queueKey: targetQueueKey(target), targetKey, alias: channel.alias });
+      }
+    });
+  });
+  void currentDisabled;
+
+  addExplicitIdentityOps(state, baselineAlias, finalAlias, baselineTargets, selectedTargets, `identity:${toAliasKey(finalAlias)}`, ops);
+  return { ops, forked: 0, excluded: 0 };
+}
+
+export function planAliasDelete(input: { state: ModelManagementState; aliasKey: string }): ModelOp[] {
+  const channel = input.state.mapping.byAliasKey.get(toAliasKey(input.aliasKey));
+  if (!channel) return [];
+  return planAliasSave({
+    state: input.state,
+    draft: {
+      alias: channel.alias,
+      previousAliasKey: channel.aliasKey,
+      baselineAlias: channel.alias,
+      isEditing: true,
+      selectedTargets: [],
+      disabledTargets: [],
+    },
+  }).ops.concat({
+    kind: 'mappingDisabledClearAlias',
+    phase: 'after-backend',
+    queueKey: `mapping-alias:${channel.aliasKey}`,
+    aliasKey: channel.aliasKey,
+  });
+}
+
+export type ProviderFormDelta = { ref: MappingTargetRef; nextEnabled: boolean };
+
 export function planProviderFormDeltas(input: {
   state: ModelManagementState;
   resource: ProviderResource;
   deltas: ProviderFormDelta[];
 }): ModelOp[] {
   const ops: ModelOp[] = [];
+  if (supportsExcludedModels(input.resource)) return ops;
   for (const delta of input.deltas) {
-    planSingleProviderFormDelta(input.state, input.resource, delta, ops);
+    if (delta.ref.source !== 'apiKey' || delta.ref.resourceId !== input.resource.id) continue;
+    const targetKey = accessEnabledKey(delta.ref);
+    if (!delta.nextEnabled) {
+      const entries = modelEntriesForTarget(readApiKeyModels(input.resource), delta.ref.modelId);
+      if (entries.length) {
+        ops.push({ kind: 'modelDisabledPut', phase: 'before-backend', queueKey: input.resource.id, targetKey, snapshot: { target: stripTarget(delta.ref), entries } });
+      }
+    } else {
+      ops.push({ kind: 'modelDisabledTake', phase: 'after-backend', queueKey: input.resource.id, target: stripTarget(delta.ref) });
+    }
   }
   return ops;
-}
-
-function planSingleProviderFormDelta(
-  state: ModelManagementState,
-  resource: ProviderResource,
-  delta: ProviderFormDelta,
-  out: ModelOp[]
-): void {
-  const { ref, nextEnabled } = delta;
-  const targetKey = accessEnabledKey(ref);
-
-  if (ref.source === 'oauth') {
-    const channel = normalizeProviderKey(ref.channel);
-    const queueKey = channel;
-    const entries = state.oauthAliasMap[channel] ?? [];
-    if (!nextEnabled) {
-      const bindings = collectMappingsForTarget({
-        modelAlias: { [channel]: entries },
-        resources: [],
-        target: ref,
-      });
-      if (!bindings.length) return;
-      const { next } = pruneOauthEntriesForModel(entries, ref.modelId);
-      out.push({
-        kind: 'mappingSuspendMerge',
-        phase: 'before-backend',
-        queueKey,
-        targetKey,
-        entries: bindings,
-      });
-      out.push({ kind: 'oauthAliasPatch', phase: 'backend', queueKey, channel, entries: next });
-      return;
-    }
-    const suspended = collectSuspendedBindingsForTarget(state.mapping, targetKey);
-    if (!suspended.length) return;
-    const { next } = restoreOauthEntries(entries, suspended, channel);
-    if (JSON.stringify(entries) !== JSON.stringify(next)) {
-      out.push({ kind: 'oauthAliasPatch', phase: 'backend', queueKey, channel, entries: next });
-    }
-    out.push({ kind: 'mappingSuspendTake', phase: 'after-backend', queueKey, targetKey });
-    return;
-  }
-
-  // apiKey
-  const queueKey = resource.id;
-  const models = readApiKeyModels(resource);
-  if (!nextEnabled) {
-    const bindings = collectMappingsForTarget({
-      modelAlias: {},
-      resources: [resource],
-      target: ref,
-    });
-    if (!bindings.length) return;
-    // openaiCompatibility 无 excludedModels：裸 {name} 条目仍可被路由调用，禁用须整条摘除
-    // （与 planOpenAiCatalogToggle 一致）；其它 apiKey brand 保留裸条目，由 excludedModels 关闭路由。
-    const { next } =
-      resource.brand === 'openaiCompatibility'
-        ? removeModelFromCatalog(models, ref.modelId)
-        : pruneApiKeyModelsForModel(models, ref.modelId);
-    out.push({
-      kind: 'mappingSuspendMerge',
-      phase: 'before-backend',
-      queueKey,
-      targetKey,
-      entries: bindings,
-    });
-    out.push({
-      kind: 'apiKeyModelsPut',
-      phase: 'backend',
-      queueKey,
-      resourceId: resource.id,
-      brand: resource.brand,
-      models: next,
-    });
-    return;
-  }
-  const suspended = collectSuspendedBindingsForTarget(state.mapping, targetKey);
-  if (!suspended.length) return;
-  const { next } = restoreApiKeyModels(models, suspended, resource.id);
-  if (JSON.stringify(models) !== JSON.stringify(next)) {
-    out.push({
-      kind: 'apiKeyModelsPut',
-      phase: 'backend',
-      queueKey,
-      resourceId: resource.id,
-      brand: resource.brand,
-      models: next,
-    });
-  }
-  out.push({ kind: 'mappingSuspendTake', phase: 'after-backend', queueKey, targetKey });
 }
 
 export { lower };

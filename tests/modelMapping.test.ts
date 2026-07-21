@@ -2,10 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   applyApiKeyModelAliasChanges,
   applyOauthAliasTargetChanges,
-  assembleFederatedMappingRows,
-  assembleManualAndAutoMappingRows,
   attachNativeIdentityTargets,
-  buildAutoMappingRows,
   buildEnabledMappingOptions,
   buildFederatedMappingRows,
   buildUnmappedModels,
@@ -17,6 +14,7 @@ import {
   getMappingDraftSignature,
   isIdentityMappingTarget,
   isMeaningfulAlias,
+  mergeFederatedMappingRows,
   mappingTargetKey,
   planAliasTargetAssignments,
   toAliasKey,
@@ -86,7 +84,7 @@ describe('modelMapping', () => {
     );
   });
 
-  test('aggregates api key aliases and ignores alias===name', () => {
+  test('aggregates api key aliases and includes identity aliases', () => {
     const resource = makeResource({
       raw: {
         apiKey: 'sk-test',
@@ -107,10 +105,10 @@ describe('modelMapping', () => {
       },
     });
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0].alias).toBe('chat-plus');
-    expect(rows[0].targets).toHaveLength(1);
-    expect(rows[0].targets[0]).toMatchObject({
+    expect(rows).toHaveLength(3);
+    const row = rows.find((item) => item.aliasKey === 'chat-plus');
+    expect(row?.targets).toHaveLength(1);
+    expect(row?.targets[0]).toMatchObject({
       source: 'apiKey',
       resourceId: resource.id,
       modelId: 'claude-opus-4-8',
@@ -129,11 +127,11 @@ describe('modelMapping', () => {
       },
     });
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0].aliasKey).toBe('chat-plus');
-    expect(rows[0].targets).toHaveLength(2);
-    expect(rows[0].targets.some((t) => t.source === 'oauth')).toBe(true);
-    expect(rows[0].targets.some((t) => t.source === 'apiKey')).toBe(true);
+    expect(rows).toHaveLength(2);
+    const row = rows.find((item) => item.aliasKey === 'chat-plus');
+    expect(row?.targets).toHaveLength(2);
+    expect(row?.targets.some((t) => t.source === 'oauth')).toBe(true);
+    expect(row?.targets.some((t) => t.source === 'apiKey')).toBe(true);
   });
 
   test('currentlyEnabled reflects enabledKeySet without dropping mapped targets', () => {
@@ -266,7 +264,7 @@ describe('modelMapping', () => {
         ],
         existingAliasKeys: [],
       })
-    ).toBe('channel_conflict');
+    ).toBeNull();
 
     // Same API Key entry may map multiple models to one custom alias.
     expect(
@@ -280,7 +278,7 @@ describe('modelMapping', () => {
       })
     ).toBeNull();
 
-    // Custom alias equal to every selected model id cannot be persisted.
+    // Identity aliases are valid backend entries in v2.
     expect(
       validateMappingSelection({
         alias: 'gpt-image-2',
@@ -295,7 +293,7 @@ describe('modelMapping', () => {
         ],
         existingAliasKeys: [],
       })
-    ).toBe('identity_only');
+    ).toBeNull();
 
     // Identity targets are ignored for channel uniqueness and for "has persistable target".
     expect(
@@ -315,7 +313,7 @@ describe('modelMapping', () => {
     ).toBeNull();
   });
 
-  test('filterPersistableMappingTargets drops identity-only bindings', () => {
+  test('filterPersistableMappingTargets keeps identity bindings', () => {
     const targets = [
       { source: 'oauth' as const, channel: 'codex', modelId: 'gpt-image-2' },
       {
@@ -328,11 +326,11 @@ describe('modelMapping', () => {
     expect(isIdentityMappingTarget('gpt-image-2', targets[0])).toBe(true);
     expect(isIdentityMappingTarget('gpt-image-2', targets[1])).toBe(false);
     const persistable = filterPersistableMappingTargets('gpt-image-2', targets);
-    expect(persistable).toHaveLength(1);
-    expect(persistable[0]).toMatchObject({ modelId: 'doubao-seedream-5.0-lite' });
+    expect(persistable).toHaveLength(2);
+    expect(persistable[0]).toMatchObject({ modelId: 'gpt-image-2' });
   });
 
-  test('planAliasTargetAssignments drops identity targets when alias is provided', () => {
+  test('planAliasTargetAssignments keeps identity targets when alias is provided', () => {
     const plan = planAliasTargetAssignments(
       [
         { source: 'oauth', channel: 'codex', modelId: 'gpt-image-2' },
@@ -345,7 +343,7 @@ describe('modelMapping', () => {
       ],
       'gpt-image-2'
     );
-    expect(plan.oauthByChannel.size).toBe(0);
+    expect(plan.oauthByChannel.get('codex')).toEqual(['gpt-image-2']);
     expect(plan.apiKeyByResource.get('r1')?.modelIds).toEqual(['doubao-seedream-5.0-lite']);
   });
 
@@ -416,95 +414,43 @@ describe('modelMapping', () => {
     ).toBe(true);
   });
 
-  test('buildAutoMappingRows groups models by id; manual absorbs same-name', () => {
-    const accessRows: ModelAccessRow[] = [
-      {
-        key: 'oauth:codex:gpt-image-2',
-        source: 'oauth',
-        modelId: 'gpt-image-2',
-        displayName: 'gpt-image-2',
-        providerLabel: 'Codex',
-        channelOrBrand: 'codex',
-        enabled: true,
-        supportsExclude: true,
-        toggleDisabled: false,
-        lockReason: null,
-        oauthChannel: 'codex',
+  test('mergeFederatedMappingRows groups every source by alias', () => {
+    const rows = buildFederatedMappingRows({
+      modelAlias: {
+        codex: [{ name: 'gpt-image-2', alias: 'vision' }],
       },
-      {
-        key: 'apiKey:openaiCompatibility:0:tool:gpt-image-2',
-        source: 'apiKey',
-        modelId: 'gpt-image-2',
-        displayName: 'gpt-image-2',
-        providerLabel: 'OpenAI · Tool_Aisonet',
-        channelOrBrand: 'openaiCompatibility',
-        enabled: true,
-        supportsExclude: false,
-        toggleDisabled: true,
-        lockReason: 'unsupported',
-        resourceId: 'openaiCompatibility:0:tool',
-        brand: 'openaiCompatibility',
-      },
-      {
-        key: 'oauth:claude:claude-sonnet-4-5',
-        source: 'oauth',
-        modelId: 'claude-sonnet-4-5',
-        displayName: 'Sonnet',
-        providerLabel: 'Claude',
-        channelOrBrand: 'claude',
-        enabled: true,
-        supportsExclude: true,
-        toggleDisabled: false,
-        lockReason: null,
-        oauthChannel: 'claude',
-      },
-    ];
-
-    // Auto: every uncovered model id becomes a channel (single-source included).
-    const autoOnly = buildAutoMappingRows(accessRows, new Set());
-    expect(autoOnly.map((r) => r.aliasKey).sort()).toEqual([
-      'claude-sonnet-4-5',
-      'gpt-image-2',
-    ]);
-    expect(autoOnly.find((r) => r.aliasKey === 'gpt-image-2')?.targets).toHaveLength(2);
-    expect(autoOnly.find((r) => r.aliasKey === 'gpt-image-2')?.kind).toBe('auto');
-
-    const { manualRows, autoRows } = assembleManualAndAutoMappingRows([], accessRows);
-    expect(manualRows).toHaveLength(0);
-    expect(autoRows).toHaveLength(2);
-
-    // Claim gpt-image-2 as manual → absorbed out of auto.
-    const claimed = assembleManualAndAutoMappingRows([], accessRows, ['gpt-image-2']);
-    expect(claimed.manualRows).toHaveLength(1);
-    expect(claimed.manualRows[0].aliasKey).toBe('gpt-image-2');
-    expect(claimed.manualRows[0].targets).toHaveLength(2);
-    expect(claimed.autoRows.map((r) => r.aliasKey)).toEqual(['claude-sonnet-4-5']);
-
-    // Configured alias merges same-name natives into manual.
-    const configured = buildFederatedMappingRows({
-      modelAlias: {},
       resources: [
         makeResource({
           id: 'openaiCompatibility:0:tool',
           brand: 'openaiCompatibility',
           raw: {
             name: 'Tool',
-            models: [{ name: 'doubao-seedream-5.0-lite', alias: 'gpt-image-2' }],
+            models: [{ name: 'doubao-seedream-5.0-lite', alias: 'vision' }],
           },
         }),
       ],
       providerLabels: { oauth: (c) => c, apiKey: () => 'Tool' },
     });
-    const withConfig = assembleManualAndAutoMappingRows(configured, accessRows);
-    expect(withConfig.manualRows).toHaveLength(1);
-    expect(withConfig.manualRows[0].aliasKey).toBe('gpt-image-2');
-    // Persistable doubao + two native gpt-image-2
-    expect(withConfig.manualRows[0].targets.length).toBeGreaterThanOrEqual(3);
-    expect(withConfig.autoRows.map((r) => r.aliasKey)).toEqual(['claude-sonnet-4-5']);
-
-    // Flat assemble still works.
-    const flat = assembleFederatedMappingRows([], accessRows);
-    expect(flat.every((r) => r.kind === 'auto' || r.kind === 'manual')).toBe(true);
+    const merged = rows.concat([
+      {
+        alias: 'VISION',
+        aliasKey: 'vision',
+        targets: [
+          {
+            source: 'oauth',
+            channel: 'claude',
+            modelId: 'claude-sonnet-4-5',
+            displayName: 'Sonnet',
+            providerLabel: 'Claude',
+            currentlyEnabled: true,
+          },
+        ],
+      },
+    ]);
+    const grouped = mergeFederatedMappingRows(merged);
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0].aliasKey).toBe('vision');
+    expect(grouped[0].targets).toHaveLength(3);
   });
 
   test('applyOauthAliasTargetChanges preserves other aliases and forceMapping', () => {
@@ -571,8 +517,8 @@ describe('modelMapping', () => {
       previousModelIds: ['a'],
     });
 
-    expect(next.find((m) => m.name === 'a')?.alias).toBeUndefined();
-    expect(next.find((m) => m.name === 'b')?.alias).toBe('chat');
+    expect(next.find((m) => m.name === 'a')?.alias).toBe('a');
+    expect(next.find((m) => m.name === 'b' && m.alias === 'chat')?.alias).toBe('chat');
     expect(next.find((m) => m.name === 'b')?.priority).toBe(1);
     expect(next.find((m) => m.name === 'c')?.alias).toBe('other');
   });
@@ -592,7 +538,7 @@ describe('modelMapping', () => {
     });
 
     expect(next.find((m) => m.name === 'a')?.alias).toBe('chat');
-    expect(next.find((m) => m.name === 'b')?.alias).toBe('chat');
+    expect(next.find((m) => m.name === 'b' && m.alias === 'chat')?.alias).toBe('chat');
     expect(next.find((m) => m.name === 'c')?.alias).toBe('other');
   });
 
@@ -605,7 +551,7 @@ describe('modelMapping', () => {
       nextModelIds: ['gpt-image-2', 'doubao-seedream-5.0-lite'],
     });
 
-    expect(next.find((m) => m.name === 'gpt-image-2')?.alias).toBeUndefined();
+    expect(next.find((m) => m.name === 'gpt-image-2')?.alias).toBe('gpt-image-2');
     expect(next.find((m) => m.name === 'doubao-seedream-5.0-lite')).toMatchObject({
       name: 'doubao-seedream-5.0-lite',
       alias: 'gpt-image-2',
@@ -659,7 +605,7 @@ describe('modelMapping', () => {
       resources: [resource],
       providerLabels: { oauth: (c) => c, apiKey: () => 'Key' },
     });
-    expect(rows.map((r) => r.aliasKey).sort()).toEqual(['chat', 'vision']);
+    expect(rows.map((r) => r.aliasKey).sort()).toEqual(['chat', 'gpt-y', 'vision']);
     expect(rows.find((r) => r.aliasKey === 'chat')?.targets[0].modelId).toBe('gpt-x');
     expect(rows.find((r) => r.aliasKey === 'vision')?.targets[0].modelId).toBe('gpt-x');
   });

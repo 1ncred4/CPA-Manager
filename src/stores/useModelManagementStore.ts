@@ -1,16 +1,4 @@
-/**
- * 模型管理 Zustand store：单一状态来源。
- *
- * 架构（Phase 2）：
- * - 持有 current/baseline 两套 sources + mirrors + ctx；access/mapping/catalogs/managedExcludeKeys
- *   是 buildStateFromSources 派生的视图（每次变更重算）。
- * - toggleAccess：planAccessToggle（消费派生态）-> applyModelOpsToSources（乐观 current）->
- *   applyModelOperations（后端 + localStorage）-> 成功 commitBaseline / 失败 clearGhosts + revertToBaseline。
- * - 失败不回滚后端（无事务），仅清掉本次 before-backend 写入的 localStorage 挂起幽灵 + 内存回滚到 baseline；
- *   调用方（hook）再触发一次 fetch + load 做权威重同步。
- *
- * saveAlias / deleteAlias / applyProviderFormDeltas 在 Phase 3-5 实现。
- */
+/** Single Zustand store for v2 model access and alias management. */
 
 import { create } from 'zustand';
 import type { OAuthModelAliasEntry } from '@/types';
@@ -40,9 +28,11 @@ import {
 } from '@/features/models/modelOps';
 import { applyModelOpsToSources } from '@/features/models/modelOpReducer';
 import { applyModelOperations } from '@/features/models/modelOpApplier';
-import { clearSuspendedForTarget } from '@/features/models/mappingSuspend';
-import { takeSuspendedCatalog } from '@/features/models/catalogSuspend';
-import { markManagedIdentityExclude } from '@/features/models/managedIdentityExclude';
+import {
+  putMappingDisabled,
+  putModelDisabledSnapshot,
+  takeModelDisabledSnapshot,
+} from '@/features/models/modelDisabledState';
 
 export type RefreshInput = {
   oauthModels: Record<string, AuthFileModelItem[]>;
@@ -54,21 +44,9 @@ export type RefreshInput = {
   ctx: ModelDisplayContext;
 };
 
-export type ToggleAccessResult = {
-  ok: boolean;
-  pruned: number;
-  restored: number;
-};
-
-export type DeleteAliasResult = {
-  ok: boolean;
-};
-
-export type SaveAliasResult = {
-  ok: boolean;
-  forked: number;
-  excluded: number;
-};
+export type ToggleAccessResult = { ok: boolean; pruned: number; restored: number };
+export type DeleteAliasResult = { ok: boolean };
+export type SaveAliasResult = { ok: boolean; forked: number; excluded: number };
 
 export type ModelManagementStore = {
   currentSources: ModelManagementSources;
@@ -80,31 +58,20 @@ export type ModelManagementStore = {
   loading: boolean;
   oauthAliasError: OAuthConfigLoadError;
   pendingKeys: Set<string>;
-
   accessCurrent: ModelAccessState;
   accessBaseline: ModelAccessState;
   mappingCurrent: ModelMappingState;
   mappingBaseline: ModelMappingState;
-  managedExcludeKeys: Set<string>;
+  explicitIdentityKeys: Set<string>;
   catalogs: ModelCatalogs;
   oauthAliasMap: Record<string, OAuthModelAliasEntry[]>;
   oauthExcludedMap: Record<string, string[]>;
-
-  /** 从原始数据 + 显示上下文构建缓存态，baseline = current。hook fetch 完成后调用。 */
   load: (input: RefreshInput) => void;
-  /** fetch 开始/结束时切 loading（两 tab 共享）。 */
   setLoading: (loading: boolean) => void;
-  /** 即时切换模型启停（模型禁用 tab）。 */
   toggleAccess: (ref: MappingTargetRef, enabled: boolean) => Promise<ToggleAccessResult>;
-  /** 保存映射草稿（映射编辑页保存按钮）。 */
   saveAlias: (draft: AliasDraft) => Promise<SaveAliasResult>;
-  /** 删除整条映射渠道。 */
   deleteAlias: (aliasKey: string) => Promise<DeleteAliasResult>;
-  /** AI 提供商页表单保存产生的启停 delta。Phase 5 实现。 */
-  applyProviderFormDeltas: (
-    deltas: ProviderFormDelta[],
-    resource: ProviderResource
-  ) => Promise<void>;
+  applyProviderFormDeltas: (deltas: ProviderFormDelta[], resource: ProviderResource) => Promise<void>;
 };
 
 const EMPTY_SOURCES: ModelManagementSources = {
@@ -113,11 +80,8 @@ const EMPTY_SOURCES: ModelManagementSources = {
   oauthAliasMap: {},
   oauthExcludedMap: {},
 };
-
 const EMPTY_ACCESS: ModelAccessState = { byKey: new Map() };
 const EMPTY_MAPPING: ModelMappingState = { byAliasKey: new Map() };
-
-/** 模块级串行队列单例（跨调用存活，不在 Zustand state 中）。 */
 export const modelOpQueues: Map<string, Promise<unknown>> = new Map();
 
 function derive(
@@ -128,36 +92,69 @@ function derive(
   return buildStateFromSources(sources, mirrors, ctx);
 }
 
-/** 清掉本次 toggle 的 before-backend localStorage 幽灵（失败回滚用）。 */
-function clearBeforeBackendGhosts(apiBase: string, ops: ModelOp[]): void {
-  for (const op of ops) {
-    if (op.phase !== 'before-backend') continue;
-    if (op.kind === 'mappingSuspendMerge') {
-      clearSuspendedForTarget(apiBase, op.targetKey);
-    } else if (op.kind === 'catalogSuspendMerge') {
-      takeSuspendedCatalog(apiBase, op.resourceId, op.modelId);
-    } else if (op.kind === 'managedExcludeUnmark') {
-      markManagedIdentityExclude(apiBase, op.key);
+function applyDerived(
+  sources: ModelManagementSources,
+  mirrors: ModelManagementMirrors,
+  ctx: ModelDisplayContext
+) {
+  const state = derive(sources, mirrors, ctx);
+  return {
+    currentSources: sources,
+    currentMirrors: mirrors,
+    accessCurrent: state.access,
+    mappingCurrent: state.mapping,
+    explicitIdentityKeys: state.explicitIdentityKeys,
+    catalogs: state.catalogs,
+    oauthAliasMap: state.oauthAliasMap,
+    oauthExcludedMap: state.oauthExcludedMap,
+  };
+}
+
+function restoreBeforeBackendLocalState(
+  apiBase: string,
+  ops: ModelOp[],
+  baselineMirrors: ModelManagementMirrors
+): void {
+  ops.forEach((op) => {
+    if (op.phase !== 'before-backend') return;
+    if (op.kind === 'modelDisabledPut') {
+      const previous = baselineMirrors.modelDisabled.get(op.targetKey);
+      if (previous) putModelDisabledSnapshot(apiBase, previous);
+      else takeModelDisabledSnapshot(apiBase, op.snapshot.target);
+    } else if (op.kind === 'mappingDisabledMerge') {
+      putMappingDisabled(apiBase, op.targetKey, baselineMirrors.mappingDisabled.get(op.targetKey) ?? []);
     }
-  }
+  });
 }
 
 export const useModelManagementStore = create<ModelManagementStore>((set, get) => {
-  /** 内存回滚到 baseline（失败时调用）。在闭包内定义以访问 set/get。 */
-  const revertToBaseline = (): void => {
+  const revertToBaseline = () => {
     const { baselineSources, baselineMirrors, ctx } = get();
     if (!ctx) return;
-    const state = derive(baselineSources, baselineMirrors, ctx);
-    set({
-      currentSources: baselineSources,
-      currentMirrors: baselineMirrors,
-      accessCurrent: state.access,
-      mappingCurrent: state.mapping,
-      managedExcludeKeys: state.managedExcludeKeys,
-      catalogs: state.catalogs,
-      oauthAliasMap: state.oauthAliasMap,
-      oauthExcludedMap: state.oauthExcludedMap,
-    });
+    set({ ...applyDerived(baselineSources, baselineMirrors, ctx), baselineSources, baselineMirrors });
+  };
+
+  const runOps = async (ops: ModelOp[], resources: ProviderResource[]): Promise<boolean> => {
+    const { apiBase, baselineMirrors } = get();
+    try {
+      const result = await applyModelOperations({ apiBase, ops, resources, queues: modelOpQueues });
+      if (result.failures.length) {
+        restoreBeforeBackendLocalState(apiBase, ops, baselineMirrors);
+        revertToBaseline();
+        return false;
+      }
+      return true;
+    } catch {
+      restoreBeforeBackendLocalState(apiBase, ops, baselineMirrors);
+      revertToBaseline();
+      return false;
+    }
+  };
+
+  const optimistic = (sources: ModelManagementSources, mirrors: ModelManagementMirrors) => {
+    const ctx = get().ctx;
+    if (!ctx) return;
+    set(applyDerived(sources, mirrors, ctx));
   };
 
   return {
@@ -170,12 +167,11 @@ export const useModelManagementStore = create<ModelManagementStore>((set, get) =
     loading: false,
     oauthAliasError: 'loading',
     pendingKeys: new Set(),
-
     accessCurrent: EMPTY_ACCESS,
     accessBaseline: EMPTY_ACCESS,
     mappingCurrent: EMPTY_MAPPING,
     mappingBaseline: EMPTY_MAPPING,
-    managedExcludeKeys: new Set(),
+    explicitIdentityKeys: new Set(),
     catalogs: { oauthModels: {}, resources: [] },
     oauthAliasMap: {},
     oauthExcludedMap: {},
@@ -190,257 +186,87 @@ export const useModelManagementStore = create<ModelManagementStore>((set, get) =
       const mirrors = loadMirrorsFromAdapters(input.apiBase);
       const state = derive(sources, mirrors, input.ctx);
       set({
-        currentSources: sources,
+        ...applyDerived(sources, mirrors, input.ctx),
         baselineSources: sources,
-        currentMirrors: mirrors,
         baselineMirrors: mirrors,
+        accessBaseline: state.access,
+        mappingBaseline: state.mapping,
         ctx: input.ctx,
         apiBase: input.apiBase,
         oauthAliasError: input.oauthAliasError,
-        accessCurrent: state.access,
-        accessBaseline: state.access,
-        mappingCurrent: state.mapping,
-        mappingBaseline: state.mapping,
-        managedExcludeKeys: state.managedExcludeKeys,
-        catalogs: state.catalogs,
-        oauthAliasMap: state.oauthAliasMap,
-        oauthExcludedMap: state.oauthExcludedMap,
       });
     },
+    setLoading: (loading) => set({ loading }),
 
     toggleAccess: async (ref, enabled) => {
-      const { currentSources, currentMirrors, ctx, apiBase } = get();
+      const { currentSources, currentMirrors, ctx } = get();
       if (!ctx) return { ok: false, pruned: 0, restored: 0 };
-
       const state = derive(currentSources, currentMirrors, ctx);
       const ops = planAccessToggle({ state, ref, nextEnabled: enabled });
       if (!ops.length) return { ok: true, pruned: 0, restored: 0 };
-
       const targetKey = accessEnabledKey(ref);
       const pruned = ops
-        .filter(
-          (o): o is Extract<ModelOp, { kind: 'mappingSuspendMerge' }> =>
-            o.kind === 'mappingSuspendMerge'
-        )
-        .reduce((n, o) => n + (o.entries?.length ?? 0), 0);
-      const restored = enabled
-        ? (currentMirrors.mappingSuspend.get(targetKey)?.length ?? 0)
-        : 0;
-
-      const setPending = (pending: boolean) => {
+        .filter((op) => op.kind === 'modelDisabledPut')
+        .reduce((count, op) => count + (op.kind === 'modelDisabledPut' ? op.snapshot.entries.length : 0), 0);
+      const restored = enabled ? currentMirrors.modelDisabled.get(targetKey)?.entries.length ?? 0 : 0;
+      const next = applyModelOpsToSources(currentSources, currentMirrors, ops);
+      optimistic(next.sources, next.mirrors);
+      set((s) => ({ pendingKeys: new Set(s.pendingKeys).add(targetKey) }));
+      const ok = await runOps(ops, currentSources.resources);
+      if (!ok) {
         set((s) => {
-          const next = new Set(s.pendingKeys);
-          if (pending) next.add(targetKey);
-          else next.delete(targetKey);
-          return { pendingKeys: next };
+          const pending = new Set(s.pendingKeys);
+          pending.delete(targetKey);
+          return { pendingKeys: pending };
         });
-      };
-
-      // 乐观 current
-      const { sources: nextSources, mirrors: nextMirrors } = applyModelOpsToSources(
-        currentSources,
-        currentMirrors,
-        ops
-      );
-      const optimistic = derive(nextSources, nextMirrors, ctx);
-      set({
-        currentSources: nextSources,
-        currentMirrors: nextMirrors,
-        accessCurrent: optimistic.access,
-        mappingCurrent: optimistic.mapping,
-        managedExcludeKeys: optimistic.managedExcludeKeys,
-        catalogs: optimistic.catalogs,
-        oauthAliasMap: optimistic.oauthAliasMap,
-        oauthExcludedMap: optimistic.oauthExcludedMap,
-      });
-      setPending(true);
-
-      // apply（resources 用 pre-toggle 快照，applier 按 op.models 写回）
-      try {
-        const { failures } = await applyModelOperations({
-          apiBase,
-          ops,
-          resources: currentSources.resources,
-          queues: modelOpQueues,
-        });
-        if (failures.length) {
-          clearBeforeBackendGhosts(apiBase, ops);
-          revertToBaseline();
-          setPending(false);
-          return { ok: false, pruned: 0, restored: 0 };
-        }
-      } catch {
-        clearBeforeBackendGhosts(apiBase, ops);
-        revertToBaseline();
-        setPending(false);
         return { ok: false, pruned: 0, restored: 0 };
       }
-
-      // 成功：current 提交为 baseline
       set((s) => ({
         baselineSources: s.currentSources,
         baselineMirrors: s.currentMirrors,
         accessBaseline: s.accessCurrent,
         mappingBaseline: s.mappingCurrent,
+        pendingKeys: new Set([...s.pendingKeys].filter((key) => key !== targetKey)),
       }));
-      setPending(false);
       return { ok: true, pruned, restored };
     },
 
     saveAlias: async (draft) => {
-      const { currentSources, currentMirrors, ctx, apiBase } = get();
+      const { currentSources, currentMirrors, ctx } = get();
       if (!ctx) return { ok: false, forked: 0, excluded: 0 };
-
-      const state = derive(currentSources, currentMirrors, ctx);
-      const { ops, forked, excluded } = planAliasSave({ state, draft });
+      const { ops, forked, excluded } = planAliasSave({ state: derive(currentSources, currentMirrors, ctx), draft });
       if (!ops.length) return { ok: true, forked, excluded };
-
-      const { sources: nextSources, mirrors: nextMirrors } = applyModelOpsToSources(
-        currentSources,
-        currentMirrors,
-        ops
-      );
-      const optimistic = derive(nextSources, nextMirrors, ctx);
-      set({
-        currentSources: nextSources,
-        currentMirrors: nextMirrors,
-        accessCurrent: optimistic.access,
-        mappingCurrent: optimistic.mapping,
-        managedExcludeKeys: optimistic.managedExcludeKeys,
-        catalogs: optimistic.catalogs,
-        oauthAliasMap: optimistic.oauthAliasMap,
-        oauthExcludedMap: optimistic.oauthExcludedMap,
-      });
-
-      try {
-        const { failures } = await applyModelOperations({
-          apiBase,
-          ops,
-          resources: currentSources.resources,
-          queues: modelOpQueues,
-        });
-        if (failures.length) {
-          clearBeforeBackendGhosts(apiBase, ops);
-          revertToBaseline();
-          return { ok: false, forked: 0, excluded: 0 };
-        }
-      } catch {
-        clearBeforeBackendGhosts(apiBase, ops);
-        revertToBaseline();
-        return { ok: false, forked: 0, excluded: 0 };
-      }
-
-      set((s) => ({
-        baselineSources: s.currentSources,
-        baselineMirrors: s.currentMirrors,
-        accessBaseline: s.accessCurrent,
-        mappingBaseline: s.mappingCurrent,
-      }));
+      const next = applyModelOpsToSources(currentSources, currentMirrors, ops);
+      optimistic(next.sources, next.mirrors);
+      const ok = await runOps(ops, currentSources.resources);
+      if (!ok) return { ok: false, forked: 0, excluded: 0 };
+      set((s) => ({ baselineSources: s.currentSources, baselineMirrors: s.currentMirrors, accessBaseline: s.accessCurrent, mappingBaseline: s.mappingCurrent }));
       return { ok: true, forked, excluded };
     },
-    setLoading: (loading) => set({ loading }),
 
     deleteAlias: async (aliasKey) => {
-      const { currentSources, currentMirrors, ctx, apiBase } = get();
+      const { currentSources, currentMirrors, ctx } = get();
       if (!ctx) return { ok: false };
-
-      const state = derive(currentSources, currentMirrors, ctx);
-      const ops = planAliasDelete({ state, aliasKey });
+      const ops = planAliasDelete({ state: derive(currentSources, currentMirrors, ctx), aliasKey });
       if (!ops.length) return { ok: true };
-
-      const { sources: nextSources, mirrors: nextMirrors } = applyModelOpsToSources(
-        currentSources,
-        currentMirrors,
-        ops
-      );
-      const optimistic = derive(nextSources, nextMirrors, ctx);
-      set({
-        currentSources: nextSources,
-        currentMirrors: nextMirrors,
-        accessCurrent: optimistic.access,
-        mappingCurrent: optimistic.mapping,
-        managedExcludeKeys: optimistic.managedExcludeKeys,
-        catalogs: optimistic.catalogs,
-        oauthAliasMap: optimistic.oauthAliasMap,
-        oauthExcludedMap: optimistic.oauthExcludedMap,
-      });
-
-      try {
-        const { failures } = await applyModelOperations({
-          apiBase,
-          ops,
-          resources: currentSources.resources,
-          queues: modelOpQueues,
-        });
-        if (failures.length) {
-          clearBeforeBackendGhosts(apiBase, ops);
-          revertToBaseline();
-          return { ok: false };
-        }
-      } catch {
-        clearBeforeBackendGhosts(apiBase, ops);
-        revertToBaseline();
-        return { ok: false };
-      }
-
-      set((s) => ({
-        baselineSources: s.currentSources,
-        baselineMirrors: s.currentMirrors,
-        accessBaseline: s.accessCurrent,
-        mappingBaseline: s.mappingCurrent,
-      }));
+      const next = applyModelOpsToSources(currentSources, currentMirrors, ops);
+      optimistic(next.sources, next.mirrors);
+      const ok = await runOps(ops, currentSources.resources);
+      if (!ok) return { ok: false };
+      set((s) => ({ baselineSources: s.currentSources, baselineMirrors: s.currentMirrors, accessBaseline: s.accessCurrent, mappingBaseline: s.mappingCurrent }));
       return { ok: true };
     },
 
     applyProviderFormDeltas: async (deltas, resource) => {
-      const { currentSources, currentMirrors, ctx, apiBase } = get();
+      const { currentSources, currentMirrors, ctx } = get();
       if (!ctx) return;
-
-      const state = derive(currentSources, currentMirrors, ctx);
-      const ops = planProviderFormDeltas({ state, resource, deltas });
+      const ops = planProviderFormDeltas({ state: derive(currentSources, currentMirrors, ctx), resource, deltas });
       if (!ops.length) return;
-
-      const { sources: nextSources, mirrors: nextMirrors } = applyModelOpsToSources(
-        currentSources,
-        currentMirrors,
-        ops
-      );
-      const optimistic = derive(nextSources, nextMirrors, ctx);
-      set({
-        currentSources: nextSources,
-        currentMirrors: nextMirrors,
-        accessCurrent: optimistic.access,
-        mappingCurrent: optimistic.mapping,
-        managedExcludeKeys: optimistic.managedExcludeKeys,
-        catalogs: optimistic.catalogs,
-        oauthAliasMap: optimistic.oauthAliasMap,
-        oauthExcludedMap: optimistic.oauthExcludedMap,
-      });
-
-      try {
-        const { failures } = await applyModelOperations({
-          apiBase,
-          ops,
-          resources: currentSources.resources,
-          queues: modelOpQueues,
-        });
-        if (failures.length) {
-          clearBeforeBackendGhosts(apiBase, ops);
-          revertToBaseline();
-          return;
-        }
-      } catch {
-        clearBeforeBackendGhosts(apiBase, ops);
-        revertToBaseline();
-        return;
+      const next = applyModelOpsToSources(currentSources, currentMirrors, ops);
+      optimistic(next.sources, next.mirrors);
+      if (await runOps(ops, currentSources.resources)) {
+        set((s) => ({ baselineSources: s.currentSources, baselineMirrors: s.currentMirrors, accessBaseline: s.accessCurrent, mappingBaseline: s.mappingCurrent }));
       }
-
-      set((s) => ({
-        baselineSources: s.currentSources,
-        baselineMirrors: s.currentMirrors,
-        accessBaseline: s.accessCurrent,
-        mappingBaseline: s.mappingCurrent,
-      }));
     },
   };
 });

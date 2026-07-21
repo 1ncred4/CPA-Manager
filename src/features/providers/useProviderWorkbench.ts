@@ -7,15 +7,13 @@ import {
   withoutDisableAllModelsRule,
 } from '@/components/providers/utils';
 import {
-  clearSuspendedCatalog,
-  listSuspendedCatalogForResource,
-  mergeSuspendedCatalog,
-  removeModelFromCatalog,
-  restoreModelToCatalog,
-  takeSuspendedCatalog,
-} from '@/features/models/catalogSuspend';
-import { useModelManagementStore } from '@/stores/useModelManagementStore';
-import type { ProviderFormDelta } from '@/features/models/modelOps';
+  accessEnabledKey,
+} from '@/features/models/modelMapping';
+import {
+  loadModelDisabledSnapshots,
+  putModelDisabledSnapshot,
+  takeModelDisabledSnapshot,
+} from '@/features/models/modelDisabledState';
 import type { GeminiKeyConfig, ModelAlias, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import {
   claudeToResource,
@@ -28,10 +26,8 @@ import {
 import { PROVIDER_BRAND_ORDER } from './descriptors';
 import {
   collectDisabledModelIds,
-  collectExactExcludedIds,
-  filterEnabledCatalogNames,
   mergeFormExcludedModels,
-  resolveEntriesToSuspend,
+  filterEnabledCatalogNames,
 } from './formModelAccess';
 import type {
   ProviderBrand,
@@ -167,8 +163,8 @@ const buildModelAliases = (
       return;
     }
 
-    // No mapping aliases: emit a single catalog entry.
-    const entry: ModelAlias = { name: cat.name };
+    // No mapping aliases: emit the identity alias as the catalog baseline.
+    const entry: ModelAlias = { name: cat.name, alias: cat.name };
     if (cat.priority !== undefined) entry.priority = cat.priority;
     if (cat.testModel) entry.testModel = cat.testModel;
     if (includeOpenAIFields) {
@@ -240,8 +236,7 @@ const buildOpenAIConfig = (
 ): OpenAIProviderConfig => {
   const headers = headersFromEntries(input.headers);
   const models =
-    modelsOverride ??
-    buildModelAliases(filterEnabledCatalogNames(input.models), true, existing?.models);
+    modelsOverride ?? buildModelAliases(filterEnabledCatalogNames(input.models), true, existing?.models);
   const apiKeyEntries =
     input.apiKeyEntries
       ?.map((entry, index) => {
@@ -272,122 +267,55 @@ const buildOpenAIConfig = (
 
 const lowerModel = (value: string): string => value.trim().toLowerCase();
 
-/** Diff previous exact excludes / catalog presence vs form toggles for mapping sync. */
-function collectModelAccessDeltas(input: {
-  brand: ProviderBrand;
-  form: ProviderEntryFormInput;
-  existingExcluded?: string[];
-  existingModels?: ModelAlias[];
-  previouslySuspendedIds?: string[];
-}): { disabled: string[]; enabled: string[] } {
-  const formByKey = new Map<string, string>();
-  const formDisabled = new Set<string>();
-  (input.form.models ?? []).forEach((m) => {
-    const name = m.name.trim();
-    if (!name) return;
-    const key = lowerModel(name);
-    if (!formByKey.has(key)) formByKey.set(key, name);
-    if (m.enabled === false) formDisabled.add(key);
-  });
+type OpenAIModelSavePlan = {
+  models: ModelAlias[];
+  snapshotsToPut: Array<{ target: { source: 'apiKey'; resourceId: string; brand: 'openaiCompatibility'; modelId: string }; entries: ModelAlias[] }>;
+  snapshotsToTake: Array<{ source: 'apiKey'; resourceId: string; brand: 'openaiCompatibility'; modelId: string }>;
+};
 
-  const disabled: string[] = [];
-  const enabled: string[] = [];
-
-  if (input.brand === 'openaiCompatibility') {
-    const prevActive = new Set(
-      (input.existingModels ?? [])
-        .map((m) => lowerModel(String(m.name ?? '')))
-        .filter(Boolean)
-    );
-    const prevSuspended = new Set((input.previouslySuspendedIds ?? []).map(lowerModel));
-    formByKey.forEach((name, key) => {
-      const nowDisabled = formDisabled.has(key);
-      if (nowDisabled && prevActive.has(key)) disabled.push(name);
-      if (!nowDisabled && prevSuspended.has(key)) enabled.push(name);
-    });
-    return { disabled, enabled };
-  }
-
-  const prevExcluded = collectExactExcludedIds(input.existingExcluded);
-  formByKey.forEach((name, key) => {
-    const nowDisabled = formDisabled.has(key);
-    const wasDisabled = prevExcluded.has(key);
-    if (nowDisabled && !wasDisabled) disabled.push(name);
-    if (!nowDisabled && wasDisabled) enabled.push(name);
-  });
-  return { disabled, enabled };
-}
-
-/**
- * Apply openaiCompatibility catalog suspend/restore around a form save.
- * Returns models[] that should be written (enabled + restored suspend entries).
- */
-function applyOpenAICatalogSuspendOnSave(input: {
+/** Build the OpenAI models payload while preserving v2 disabled snapshots. */
+function buildOpenAIModelsForSave(input: {
   apiBase: string;
   resourceId: string;
   form: ProviderEntryFormInput;
   existingModels?: ModelAlias[] | null;
-}): ModelAlias[] {
-  const formByKey = new Map(
-    (input.form.models ?? [])
-      .map((m) => [lowerModel(m.name), m] as const)
-      .filter(([key]) => Boolean(key))
-  );
+}): OpenAIModelSavePlan {
   const existing = input.existingModels ?? [];
-  const existingKeys = new Set(
-    existing.map((m) => lowerModel(String(m.name ?? ''))).filter(Boolean)
-  );
-  const previouslySuspended = listSuspendedCatalogForResource(input.apiBase, input.resourceId);
-  const prevSuspendedKeys = new Set(previouslySuspended.map((e) => lowerModel(e.modelId)));
-
-  // Models removed from the form entirely → clear catalog suspend ghosts.
-  previouslySuspended.forEach((entry) => {
-    const key = lowerModel(entry.modelId);
-    if (!formByKey.has(key)) {
-      clearSuspendedCatalog(input.apiBase, input.resourceId, entry.modelId);
-    }
-  });
-
-  const prevSuspendedByKey = new Map(
-    previouslySuspended.map((entry) => [lowerModel(entry.modelId), entry] as const)
-  );
-
-  // Disable: stash full entries then omit from catalog write.
-  let working = [...existing];
-  formByKey.forEach((entry, key) => {
-    if (entry.enabled !== false) return;
-    const name = entry.name.trim();
+  const snapshots = loadModelDisabledSnapshots(input.apiBase);
+  const byName = new Map<string, ModelAlias[]>();
+  existing.forEach((entry) => {
+    const name = String(entry.name ?? '').trim();
     if (!name) return;
-    if (existingKeys.has(key) || prevSuspendedKeys.has(key)) {
-      const prev = prevSuspendedByKey.get(key);
-      // Prefer existing suspended entries if model was already out of catalog.
-      const toSuspend =
-        !existingKeys.has(key) && prev?.entries?.length
-          ? prev.entries
-          : resolveEntriesToSuspend(existing, name, entry);
-      mergeSuspendedCatalog(input.apiBase, input.resourceId, name, toSuspend);
-    }
-    const removed = removeModelFromCatalog(working, name);
-    working = removed.next;
+    const list = byName.get(lowerModel(name)) ?? [];
+    list.push({ ...entry, name, alias: String(entry.alias ?? name).trim() || name });
+    byName.set(lowerModel(name), list);
   });
-
-  const enabledForm = filterEnabledCatalogNames(input.form.models);
-  // Restore previously suspended models that are now enabled.
-  enabledForm.forEach((entry) => {
-    const name = entry.name.trim();
+  const result: ModelAlias[] = [];
+  const snapshotsToPut: OpenAIModelSavePlan['snapshotsToPut'] = [];
+  const snapshotsToTake: OpenAIModelSavePlan['snapshotsToTake'] = [];
+  const seen = new Set<string>();
+  (input.form.models ?? []).forEach((formEntry) => {
+    const name = formEntry.name.trim();
     if (!name) return;
     const key = lowerModel(name);
-    if (!prevSuspendedKeys.has(key)) return;
-    const taken = takeSuspendedCatalog(input.apiBase, input.resourceId, name);
-    const entries = taken?.entries?.length
-      ? taken.entries
-      : resolveEntriesToSuspend(existing, name, entry);
-    const restored = restoreModelToCatalog(working, entries);
-    working = restored.next;
+    const targetKey = accessEnabledKey({ source: 'apiKey', resourceId: input.resourceId, brand: 'openaiCompatibility', modelId: name });
+    const snapshot = snapshots.get(targetKey);
+    if (formEntry.enabled === false) {
+      const entries = snapshot?.entries?.length ? snapshot.entries : byName.get(key) ?? [{ name, alias: name }];
+      if (!snapshot || JSON.stringify(snapshot.entries) !== JSON.stringify(entries)) {
+        snapshotsToPut.push({ target: { source: 'apiKey', resourceId: input.resourceId, brand: 'openaiCompatibility', modelId: name }, entries });
+      }
+      return;
+    }
+    const entries = snapshot?.entries?.length ? snapshot.entries : byName.get(key) ?? [{ name, alias: name }];
+    entries.forEach((entry) => {
+      const normalized = { ...entry, name, alias: String(entry.alias ?? name).trim() || name };
+      const entryKey = `${lowerModel(normalized.name)}|${lowerModel(normalized.alias)}`;
+      if (!seen.has(entryKey)) { seen.add(entryKey); result.push(normalized); }
+    });
+    if (snapshot) snapshotsToTake.push({ source: 'apiKey', resourceId: input.resourceId, brand: 'openaiCompatibility', modelId: name });
   });
-
-  // Rebuild via buildModelAliases so catalog order/flags follow form, aliases preserved.
-  return buildModelAliases(enabledForm, true, working);
+  return { models: result, snapshotsToPut, snapshotsToTake };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -400,7 +328,6 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
   const fetchConfig = useConfigStore((s) => s.fetchConfig);
   const updateConfigValue = useConfigStore((s) => s.updateConfigValue);
   const isCacheValid = useConfigStore((s) => s.isCacheValid);
-  const storeApplyProviderFormDeltas = useModelManagementStore((s) => s.applyProviderFormDeltas);
 
   const [isPending, setIsPending] = useState<boolean>(() => !isCacheValid());
   const [isFetching, setIsFetching] = useState<boolean>(false);
@@ -537,41 +464,7 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
         const brand = resource.brand;
         const selector = resource.selector;
         const apiBase = useAuthStore.getState().apiBase;
-        const existingRaw = resource.raw as
-          | GeminiKeyConfig
-          | ProviderKeyConfig
-          | OpenAIProviderConfig;
-        const existingModels =
-          ((existingRaw as { models?: ModelAlias[] }).models ?? []) as ModelAlias[];
-        const existingExcluded =
-          brand === 'openaiCompatibility'
-            ? undefined
-            : (existingRaw as GeminiKeyConfig | ProviderKeyConfig).excludedModels;
-        const previouslySuspendedIds =
-          brand === 'openaiCompatibility' && apiBase
-            ? listSuspendedCatalogForResource(apiBase, resource.id).map((e) => e.modelId)
-            : [];
-
-        const deltas = collectModelAccessDeltas({
-          brand,
-          form: input,
-          existingExcluded,
-          existingModels,
-          previouslySuspendedIds,
-        });
-
-        // OpenAI: prune mappings while models[] still contains disabled names.
-        // Exclude brands can prune after save (models[] keep disabled names).
-        if (brand === 'openaiCompatibility' && apiBase && deltas.disabled.length) {
-          await storeApplyProviderFormDeltas(
-            deltas.disabled.map((modelId) => ({
-              ref: { source: 'apiKey', resourceId: resource.id, brand, modelId },
-              nextEnabled: false,
-            })),
-            resource
-          );
-        }
-
+        let openaiModelPlan: OpenAIModelSavePlan | null = null;
         if (brand === 'gemini' && selector.brand === 'gemini') {
           const existing = resource.raw as GeminiKeyConfig;
           await providersApi.updateGeminiKey(
@@ -609,50 +502,33 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
           );
         } else if (brand === 'openaiCompatibility' && selector.brand === 'openaiCompatibility') {
           const existing = resource.raw as OpenAIProviderConfig;
-          const modelsOverride = apiBase
-            ? applyOpenAICatalogSuspendOnSave({
+          openaiModelPlan = apiBase
+            ? buildOpenAIModelsForSave({
                 apiBase,
                 resourceId: resource.id,
                 form: input,
                 existingModels: existing.models,
               })
-            : undefined;
+            : null;
           await providersApi.updateOpenAIProvider(
             selector.name,
             selector.index,
-            buildOpenAIConfig(input, existing, modelsOverride)
+            buildOpenAIConfig(input, existing, openaiModelPlan?.models)
           );
+        }
+
+        if (openaiModelPlan && apiBase) {
+          openaiModelPlan.snapshotsToPut.forEach((snapshot) => putModelDisabledSnapshot(apiBase, snapshot));
+          openaiModelPlan.snapshotsToTake.forEach((target) => takeModelDisabledSnapshot(apiBase, target));
         }
 
         await refetch();
 
-        // Sync mapping prune/restore after config is written.
-        // OpenAI disables already pruned above; only restore those. Exclude brands do both here.
-        if (apiBase && (deltas.disabled.length || deltas.enabled.length)) {
-          const postDeltas: ProviderFormDelta[] = [];
-          if (brand !== 'openaiCompatibility') {
-            deltas.disabled.forEach((modelId) =>
-              postDeltas.push({
-                ref: { source: 'apiKey', resourceId: resource.id, brand, modelId },
-                nextEnabled: false,
-              })
-            );
-          }
-          deltas.enabled.forEach((modelId) =>
-            postDeltas.push({
-              ref: { source: 'apiKey', resourceId: resource.id, brand, modelId },
-              nextEnabled: true,
-            })
-          );
-          if (postDeltas.length) {
-            await storeApplyProviderFormDeltas(postDeltas, resource);
-          }
-        }
       } finally {
         setMutating(false);
       }
     },
-    [refetch, storeApplyProviderFormDeltas]
+    [refetch]
   );
 
   const deleteProvider = useCallback(

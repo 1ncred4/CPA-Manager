@@ -16,19 +16,18 @@
 import { authFilesApi } from '@/services/api/authFiles';
 import type { ProviderResource } from '@/features/providers/types';
 import {
-  clearSuspendedForAlias,
-  mergeSuspendedForTarget,
-  takeSuspendedForTarget,
-} from './mappingSuspend';
-import { mergeSuspendedCatalog, takeSuspendedCatalog } from './catalogSuspend';
-import {
-  markManagedIdentityExclude,
-  unmarkManagedIdentityExclude,
-} from './managedIdentityExclude';
-import { claimManualMapping, unclaimManualMapping } from './mappingClaims';
+  clearMappingDisabledForAlias,
+  mergeMappingDisabled,
+  markExplicitIdentity,
+  putModelDisabledSnapshot,
+  takeMappingDisabledForTarget,
+  takeModelDisabledSnapshot,
+  unmarkExplicitIdentity,
+} from './modelDisabledState';
 import { updateApiKeyExcludedModels } from './updateApiKeyExcludedModels';
 import { updateApiKeyModels } from './updateApiKeyModels';
 import type { ModelOp, ModelOpPhase } from './modelOps';
+import type { MappingTargetRef } from './modelMapping';
 
 export type ModelOpFailure = {
   op: ModelOp;
@@ -128,34 +127,45 @@ async function runOp(input: ApplyModelOperationsInput, op: ModelOp): Promise<voi
       await updateApiKeyExcludedModels(resource, op.modelsWithoutStar);
       return;
     }
-    case 'mappingSuspendMerge':
-      mergeSuspendedForTarget(input.apiBase, op.targetKey, op.entries);
+    case 'modelDisabledPut':
+      putModelDisabledSnapshot(input.apiBase, op.snapshot);
       return;
-    case 'mappingSuspendTake':
-      takeSuspendedForTarget(input.apiBase, op.targetKey);
+    case 'modelDisabledTake':
+      takeModelDisabledSnapshot(input.apiBase, op.target);
       return;
-    case 'mappingSuspendClearAlias':
-      clearSuspendedForAlias(input.apiBase, op.aliasKey);
+    case 'mappingDisabledMerge':
+      mergeMappingDisabled(input.apiBase, op.targetKey, op.entries);
       return;
-    case 'catalogSuspendMerge':
-      mergeSuspendedCatalog(input.apiBase, op.resourceId, op.modelId, op.entries);
+    case 'mappingDisabledTake':
+      takeMappingDisabledForTarget(input.apiBase, op.alias, targetFromKey(op));
       return;
-    case 'catalogSuspendTake':
-      takeSuspendedCatalog(input.apiBase, op.resourceId, op.modelId);
+    case 'mappingDisabledClearAlias':
+      clearMappingDisabledForAlias(input.apiBase, op.aliasKey);
       return;
-    case 'managedExcludeMark':
-      markManagedIdentityExclude(input.apiBase, op.key);
+    case 'explicitIdentityMark': {
+      markExplicitIdentity(input.apiBase, op.target);
       return;
-    case 'managedExcludeUnmark':
-      unmarkManagedIdentityExclude(input.apiBase, op.key);
+    }
+    case 'explicitIdentityUnmark': {
+      unmarkExplicitIdentity(input.apiBase, op.target);
       return;
-    case 'mappingClaim':
-      claimManualMapping(input.apiBase, op.aliasKey);
-      return;
-    case 'mappingUnclaim':
-      unclaimManualMapping(input.apiBase, op.aliasKey);
-      return;
+    }
   }
+}
+
+function targetFromKey(op: Extract<ModelOp, { kind: 'mappingDisabledTake' }>): MappingTargetRef {
+  // mappingDisabledTake carries only the stable access key; local storage also
+  // accepts the target reference, so decode the key for both source kinds.
+  const parts = op.targetKey.split(':');
+  if (parts[0] === 'oauth') {
+    return { source: 'oauth', channel: parts[1] ?? '', modelId: parts.slice(2).join(':') };
+  }
+  return {
+    source: 'apiKey',
+    resourceId: parts[1] ?? '',
+    brand: 'openaiCompatibility',
+    modelId: parts.slice(2).join(':'),
+  };
 }
 
 function lookupResource(resources: ProviderResource[], resourceId: string): ProviderResource {

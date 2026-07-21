@@ -1,512 +1,90 @@
 import { describe, expect, test } from 'bun:test';
-import { planAccessToggle, planAliasDelete, planAliasSave, planProviderFormDeltas, type AliasDraft, type ModelOp } from '../src/features/models/modelOps';
-import type {
-  ModelAccessEntry,
-  ModelManagementState,
-  ModelMappingChannel,
-  ModelMappingTarget,
-} from '../src/features/models/modelManagementState';
+import { planAccessToggle, planAliasSave, planProviderFormDeltas, type ModelOp } from '../src/features/models/modelOps';
+import type { ModelManagementState } from '../src/features/models/modelManagementState';
 import type { MappingTargetRef } from '../src/features/models/modelMapping';
 import type { ProviderResource } from '../src/features/providers/types';
 import type { ModelAlias, OAuthModelAliasEntry } from '../src/types';
 
-// ---- fixtures -------------------------------------------------------------
+const apiRef = (resourceId: string, brand: ProviderResource['brand'], modelId: string): MappingTargetRef => ({ source: 'apiKey', resourceId, brand, modelId });
+const oauthRef = (channel: string, modelId: string): MappingTargetRef => ({ source: 'oauth', channel, modelId });
+const resource = (id: string, brand: ProviderResource['brand'], raw: Record<string, unknown>): ProviderResource => ({ id, brand, raw } as unknown as ProviderResource);
 
-function mkResource(
-  id: string,
-  brand: ProviderResource['brand'],
-  raw: { models?: ModelAlias[]; excludedModels?: string[] }
-): ProviderResource {
-  return { id, brand, raw } as unknown as ProviderResource;
-}
-
-function mkOauthRef(channel: string, modelId: string): MappingTargetRef {
-  return { source: 'oauth', channel, modelId };
-}
-
-function mkApiKeyRef(
-  resourceId: string,
-  brand: ProviderResource['brand'],
-  modelId: string
-): MappingTargetRef {
-  return { source: 'apiKey', resourceId, brand, modelId };
-}
-
-function mkMappingChannel(alias: string, targets: ModelMappingTarget[]): ModelMappingChannel {
-  return {
-    alias,
-    aliasKey: alias.trim().toLowerCase(),
-    targets,
-    claimedManual: false,
-  };
-}
-
-function suspendedOauthTarget(
-  alias: string,
-  channel: string,
-  modelId: string
-): { channel: ModelMappingChannel; target: ModelMappingTarget } {
-  const target: ModelMappingTarget = {
-    source: 'oauth',
-    channel,
-    modelId,
-    displayName: modelId,
-    providerLabel: channel,
-    iconSrc: null,
-    suspended: true,
-  };
-  return { channel: mkMappingChannel(alias, [target]), target };
-}
-
-function suspendedApiKeyTarget(
-  alias: string,
-  resourceId: string,
-  brand: ProviderResource['brand'],
-  modelId: string
-): { channel: ModelMappingChannel; target: ModelMappingTarget } {
-  const target: ModelMappingTarget = {
-    source: 'apiKey',
-    resourceId,
-    brand,
-    modelId,
-    displayName: modelId,
-    providerLabel: brand,
-    iconSrc: null,
-    suspended: true,
-  };
-  return { channel: mkMappingChannel(alias, [target]), target };
-}
-
-function mkState(opts: {
+function state(input: {
   oauthAliasMap?: Record<string, OAuthModelAliasEntry[]>;
   oauthExcludedMap?: Record<string, string[]>;
   resources?: ProviderResource[];
-  mappingChannels?: ModelMappingChannel[];
-  managedExcludeKeys?: string[];
-  accessEntries?: ModelAccessEntry[];
+  modelDisabled?: Map<string, { target: MappingTargetRef; entries: ModelAlias[] }>;
+  mapping?: ModelManagementState['mapping'];
 }): ModelManagementState {
-  const mapping = new Map<string, ModelMappingChannel>();
-  (opts.mappingChannels ?? []).forEach((ch) => mapping.set(ch.aliasKey, ch));
-  const access = new Map<string, ModelAccessEntry>();
-  (opts.accessEntries ?? []).forEach((e) => access.set(e.key, e));
   return {
-    access: { byKey: access },
-    mapping: { byAliasKey: mapping },
-    managedExcludeKeys: new Set(opts.managedExcludeKeys ?? []),
-    oauthAliasMap: opts.oauthAliasMap ?? {},
-    oauthExcludedMap: opts.oauthExcludedMap ?? {},
-    catalogs: { oauthModels: {}, resources: opts.resources ?? [] },
+    access: { byKey: new Map() },
+    mapping: input.mapping ?? { byAliasKey: new Map() },
+    explicitIdentityKeys: new Set(),
+    modelDisabled: input.modelDisabled ?? new Map(),
+    mappingDisabled: new Map(),
+    oauthAliasMap: input.oauthAliasMap ?? {},
+    oauthExcludedMap: input.oauthExcludedMap ?? {},
+    catalogs: { oauthModels: { claude: [{ id: 'a' }, { id: 'b' }] }, resources: input.resources ?? [] },
   };
 }
 
-function accessEntryWithCatalog(key: string, entries: ModelAlias[]): ModelAccessEntry {
-  return { key, suspendedCatalogEntries: entries } as unknown as ModelAccessEntry;
-}
+const kinds = (ops: ModelOp[]) => ops.map((op) => op.kind);
 
-// ---- op finders -----------------------------------------------------------
-
-const phaseOf = (op: ModelOp) => op.phase;
-const kindOf = (op: ModelOp) => op.kind;
-
-function opsOfKind(ops: ModelOp[], kind: ModelOp['kind']): ModelOp[] {
-  return ops.filter((o) => o.kind === kind);
-}
-
-// ===========================================================================
-
-describe('planAccessToggle', () => {
-  test('OAuth disable a mapping target: suspend-merge (before) + prune alias + write exclude', () => {
-    const state = mkState({
-      oauthAliasMap: {
-        claude: [{ name: 'kimi-k3', alias: 'claude-opus-4-8' }],
-      },
-      oauthExcludedMap: {},
-    });
-    const ops = planAccessToggle({ state, ref: mkOauthRef('claude', 'kimi-k3'), nextEnabled: false });
-
-    // before-backend: mappingSuspendMerge captures the binding
-    const merges = opsOfKind(ops, 'mappingSuspendMerge');
-    expect(merges).toHaveLength(1);
-    expect(merges[0].phase).toBe('before-backend');
-    if (merges[0].kind === 'mappingSuspendMerge') {
-      expect(merges[0].targetKey).toBe('oauth:claude:kimi-k3');
-      expect(merges[0].entries).toEqual([
-        {
-          alias: 'claude-opus-4-8',
-          target: { source: 'oauth', channel: 'claude', modelId: 'kimi-k3' },
-          fork: undefined,
-          forceMapping: undefined,
-        },
-      ]);
-    }
-
-    // backend: prune alias (now empty) then write exclude
-    const aliasPatches = opsOfKind(ops, 'oauthAliasPatch');
-    expect(aliasPatches).toHaveLength(1);
-    if (aliasPatches[0].kind === 'oauthAliasPatch') {
-      expect(aliasPatches[0].channel).toBe('claude');
-      expect(aliasPatches[0].entries).toEqual([]); // pruned
-    }
-    const excludedPatches = opsOfKind(ops, 'oauthExcludedPatch');
-    expect(excludedPatches).toHaveLength(1);
-    if (excludedPatches[0].kind === 'oauthExcludedPatch') {
-      expect(excludedPatches[0].models).toEqual(['kimi-k3']);
-    }
-    // prune before exclude (plan rule #2)
-    const backendIdx = ops
-      .filter((o) => o.phase === 'backend')
-      .map((o) => o.kind);
-    expect(backendIdx).toEqual(['oauthAliasPatch', 'oauthExcludedPatch']);
+describe('v2 model access planner', () => {
+  test('exclude-capable model disable changes only excludedModels', () => {
+    const ref = oauthRef('claude', 'a');
+    const ops = planAccessToggle({ state: state({ oauthAliasMap: { claude: [{ name: 'a', alias: 'chat' }] } }), ref, nextEnabled: false });
+    expect(kinds(ops)).toEqual(['oauthExcludedPatch']);
+    expect(ops[0]).toMatchObject({ models: ['a'] });
   });
 
-  test('OAuth disable a non-mapping model: only exclude write, no suspend/alias op', () => {
-    const state = mkState({
-      oauthAliasMap: { claude: [] },
-      oauthExcludedMap: {},
-    });
-    const ops = planAccessToggle({ state, ref: mkOauthRef('claude', 'sonnet'), nextEnabled: false });
-
-    expect(opsOfKind(ops, 'mappingSuspendMerge')).toHaveLength(0);
-    expect(opsOfKind(ops, 'oauthAliasPatch')).toHaveLength(0);
-    const excludedPatches = opsOfKind(ops, 'oauthExcludedPatch');
-    expect(excludedPatches).toHaveLength(1);
-    if (excludedPatches[0].kind === 'oauthExcludedPatch') {
-      expect(excludedPatches[0].models).toEqual(['sonnet']);
-    }
+  test('OpenAI model disable snapshots every alias entry and removes the model', () => {
+    const ref = apiRef('openai:0', 'openaiCompatibility', 'gpt-4o');
+    const item = resource('openai:0', 'openaiCompatibility', { models: [{ name: 'gpt-4o', alias: 'chat' }, { name: 'gpt-4o', alias: 'gpt-4o' }, { name: 'other', alias: 'other' }] });
+    const ops = planAccessToggle({ state: state({ resources: [item] }), ref, nextEnabled: false });
+    expect(kinds(ops)).toEqual(['modelDisabledPut', 'apiKeyModelsPut']);
+    expect(ops[0]).toMatchObject({ snapshot: { entries: [{ alias: 'chat' }, { alias: 'gpt-4o' }] } });
+    expect(ops[1]).toMatchObject({ models: [{ name: 'other', alias: 'other' }] });
   });
 
-  test('OAuth enable with suspended binding: clear exclude + restore alias (backend) then take (after)', () => {
-    const { channel } = suspendedOauthTarget('claude-opus-4-8', 'claude', 'kimi-k3');
-    const state = mkState({
-      oauthAliasMap: { claude: [] }, // alias was pruned when disabled
-      oauthExcludedMap: { claude: ['kimi-k3'] },
-      mappingChannels: [channel],
-    });
-    const ops = planAccessToggle({ state, ref: mkOauthRef('claude', 'kimi-k3'), nextEnabled: true });
-
-    const excludedPatches = opsOfKind(ops, 'oauthExcludedPatch');
-    expect(excludedPatches).toHaveLength(1);
-    if (excludedPatches[0].kind === 'oauthExcludedPatch') {
-      expect(excludedPatches[0].models).toEqual([]); // cleared
-    }
-    const aliasPatches = opsOfKind(ops, 'oauthAliasPatch');
-    expect(aliasPatches).toHaveLength(1);
-    if (aliasPatches[0].kind === 'oauthAliasPatch') {
-      expect(aliasPatches[0].entries).toEqual([{ name: 'kimi-k3', alias: 'claude-opus-4-8' }]);
-    }
-    // take is after-backend (only clear localStorage after restore PUT succeeds)
-    const takes = opsOfKind(ops, 'mappingSuspendTake');
-    expect(takes).toHaveLength(1);
-    expect(takes[0].phase).toBe('after-backend');
+  test('OpenAI re-enable restores the latest snapshot', () => {
+    const ref = apiRef('openai:0', 'openaiCompatibility', 'gpt-4o');
+    const snapshot = { target: ref, entries: [{ name: 'gpt-4o', alias: 'chat' }, { name: 'gpt-4o', alias: 'gpt-4o' }] };
+    const ops = planAccessToggle({ state: state({ resources: [resource('openai:0', 'openaiCompatibility', { models: [{ name: 'other', alias: 'other' }] })], modelDisabled: new Map([['apiKey:openai:0:gpt-4o', snapshot]]) }), ref, nextEnabled: true });
+    expect(kinds(ops)).toEqual(['apiKeyModelsPut', 'modelDisabledTake']);
+    expect(ops[0]).toMatchObject({ models: expect.arrayContaining(snapshot.entries.concat([{ name: 'other', alias: 'other' }])) });
   });
 
-  test('API Key (non-OpenAI) disable a mapping target: suspend-merge + prune models + write excludedModels', () => {
-    const resource = mkResource('res1', 'gemini', {
-      models: [{ name: 'gemini-2.5-pro', alias: 'my-gemini' }],
-      excludedModels: [],
-    });
-    const state = mkState({ resources: [resource] });
-    const ops = planAccessToggle({
-      state,
-      ref: mkApiKeyRef('res1', 'gemini', 'gemini-2.5-pro'),
-      nextEnabled: false,
-    });
-
-    const merges = opsOfKind(ops, 'mappingSuspendMerge');
-    expect(merges).toHaveLength(1);
-    expect(merges[0].phase).toBe('before-backend');
-    if (merges[0].kind === 'mappingSuspendMerge') {
-      expect(merges[0].targetKey).toBe('apiKey:res1:gemini-2.5-pro');
-      expect(merges[0].entries[0].alias).toBe('my-gemini');
-    }
-    // prune models (alias stripped) before exclude (plan rule #2)
-    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
-    expect(modelPuts).toHaveLength(1);
-    if (modelPuts[0].kind === 'apiKeyModelsPut') {
-      expect(modelPuts[0].models).toEqual([{ name: 'gemini-2.5-pro' }]); // alias stripped
-    }
-    const excludedPatches = opsOfKind(ops, 'apiKeyExcludedPatch');
-    expect(excludedPatches).toHaveLength(1);
-    if (excludedPatches[0].kind === 'apiKeyExcludedPatch') {
-      expect(excludedPatches[0].modelsWithoutStar).toEqual(['gemini-2.5-pro']);
-    }
-    const backendIdx = ops.filter((o) => o.phase === 'backend').map((o) => o.kind);
-    expect(backendIdx).toEqual(['apiKeyModelsPut', 'apiKeyExcludedPatch']);
+  test('same OAuth channel may keep multiple models under one alias', () => {
+    const ops = planAliasSave({ state: state({ oauthAliasMap: { claude: [{ name: 'a', alias: 'old' }, { name: 'b', alias: 'old' }] } }), draft: { alias: 'chat', previousAliasKey: null, baselineAlias: '', isEditing: false, selectedTargets: [oauthRef('claude', 'a'), oauthRef('claude', 'b')], disabledTargets: [] } });
+    const patch = ops.ops.find((op) => op.kind === 'oauthAliasPatch');
+    expect(patch).toMatchObject({ entries: expect.arrayContaining([{ name: 'a', alias: 'chat' }, { name: 'b', alias: 'chat' }]) });
   });
 
-  test('OpenAI disable a mapping target: suspend-merge + catalog-merge (before) + single combined models PUT', () => {
-    const resource = mkResource('res2', 'openaiCompatibility', {
-      models: [
-        { name: 'gpt-4o', alias: 'my-gpt' },
-        { name: 'gpt-4o-mini' },
-      ],
-    });
-    const state = mkState({ resources: [resource] });
-    const ops = planAccessToggle({
-      state,
-      ref: mkApiKeyRef('res2', 'openaiCompatibility', 'gpt-4o'),
-      nextEnabled: false,
-    });
-
-    // before-backend: mapping suspend + catalog suspend
-    const merges = opsOfKind(ops, 'mappingSuspendMerge');
-    expect(merges).toHaveLength(1);
-    if (merges[0].kind === 'mappingSuspendMerge') {
-      expect(merges[0].entries[0].alias).toBe('my-gpt');
-    }
-    const catalogMerges = opsOfKind(ops, 'catalogSuspendMerge');
-    expect(catalogMerges).toHaveLength(1);
-    expect(catalogMerges[0].phase).toBe('before-backend');
-    if (catalogMerges[0].kind === 'catalogSuspendMerge') {
-      expect(catalogMerges[0].modelId).toBe('gpt-4o');
-      expect(catalogMerges[0].entries).toEqual([{ name: 'gpt-4o' }]); // bare entry
-    }
-    // backend: ONE combined PUT (alias stripped + entry removed)
-    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
-    expect(modelPuts).toHaveLength(1);
-    if (modelPuts[0].kind === 'apiKeyModelsPut') {
-      expect(modelPuts[0].models).toEqual([{ name: 'gpt-4o-mini' }]);
-    }
-    // no excludedModels op for OpenAI catalog disable
-    expect(opsOfKind(ops, 'apiKeyExcludedPatch')).toHaveLength(0);
+  test('mapping target disable stores exact alias binding and restore removes only that binding', () => {
+    const ref = apiRef('gemini:0', 'gemini', 'a');
+    const mapping = { byAliasKey: new Map([['chat', { alias: 'chat', aliasKey: 'chat', targets: [{ ...ref, displayName: 'a', providerLabel: 'Gemini', iconSrc: null, suspended: false }] }]]) };
+    const item = resource('gemini:0', 'gemini', { models: [{ name: 'a', alias: 'chat' }], excludedModels: [] });
+    const disabledOps = planAliasSave({ state: state({ resources: [item], mapping }), draft: { alias: 'chat', previousAliasKey: 'chat', baselineAlias: 'chat', isEditing: true, selectedTargets: [], disabledTargets: [{ alias: 'chat', target: ref }] } }).ops;
+    expect(disabledOps.some((op) => op.kind === 'mappingDisabledMerge')).toBe(true);
+    expect(disabledOps.some((op) => op.kind === 'apiKeyModelsPut')).toBe(true);
+    const restoreOps = planAliasSave({ state: state({ resources: [item], mapping: { byAliasKey: new Map([['chat', { alias: 'chat', aliasKey: 'chat', targets: [{ ...ref, displayName: 'a', providerLabel: 'Gemini', iconSrc: null, suspended: true, disabledReason: 'mapping' }] }]]) } }), draft: { alias: 'chat', previousAliasKey: 'chat', baselineAlias: 'chat', isEditing: true, selectedTargets: [ref], disabledTargets: [] } }).ops;
+    expect(restoreOps.some((op) => op.kind === 'mappingDisabledTake')).toBe(true);
   });
 
-  test('OpenAI enable: combined models PUT restores entry+alias, then catalog/mapping take (after)', () => {
-    const resource = mkResource('res2', 'openaiCompatibility', {
-      models: [{ name: 'gpt-4o-mini' }], // gpt-4o was removed when disabled
-    });
-    const { channel } = suspendedApiKeyTarget('my-gpt', 'res2', 'openaiCompatibility', 'gpt-4o');
-    const state = mkState({
-      resources: [resource],
-      mappingChannels: [channel],
-      accessEntries: [accessEntryWithCatalog('apiKey:res2:gpt-4o', [{ name: 'gpt-4o' }])],
-    });
-    const ops = planAccessToggle({
-      state,
-      ref: mkApiKeyRef('res2', 'openaiCompatibility', 'gpt-4o'),
-      nextEnabled: true,
-    });
-
-    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
-    expect(modelPuts).toHaveLength(1);
-    if (modelPuts[0].kind === 'apiKeyModelsPut') {
-      const names = modelPuts[0].models.map((m) => ({ name: m.name, alias: m.alias }));
-      expect(names).toContainEqual({ name: 'gpt-4o', alias: 'my-gpt' });
-      expect(names).toContainEqual({ name: 'gpt-4o-mini', alias: undefined });
-    }
-    const catalogTakes = opsOfKind(ops, 'catalogSuspendTake');
-    expect(catalogTakes).toHaveLength(1);
-    expect(catalogTakes[0].phase).toBe('after-backend');
-    const mappingTakes = opsOfKind(ops, 'mappingSuspendTake');
-    expect(mappingTakes).toHaveLength(1);
-    expect(mappingTakes[0].phase).toBe('after-backend');
+  test('editing a disabled model updates its snapshot instead of backend models', () => {
+    const ref = apiRef('openai:0', 'openaiCompatibility', 'gpt-4o');
+    const snapshot = { target: ref, entries: [{ name: 'gpt-4o', alias: 'old' }] };
+    const ops = planAliasSave({ state: state({ resources: [resource('openai:0', 'openaiCompatibility', { models: [] })], modelDisabled: new Map([['apiKey:openai:0:gpt-4o', snapshot]]) }), draft: { alias: 'new', previousAliasKey: 'old', baselineAlias: 'old', isEditing: true, selectedTargets: [ref], disabledTargets: [] } }).ops;
+    expect(ops.some((op) => op.kind === 'modelDisabledPut' && op.snapshot.entries.some((entry) => entry.alias === 'new'))).toBe(true);
+    expect(ops.some((op) => op.kind === 'apiKeyModelsPut')).toBe(false);
   });
 
-  test('OAuth disable clears managed-exclude mask before backend (user toggle)', () => {
-    const state = mkState({
-      oauthAliasMap: { claude: [] },
-      oauthExcludedMap: {},
-      managedExcludeKeys: ['oauth:claude:sonnet'],
-    });
-    const ops = planAccessToggle({ state, ref: mkOauthRef('claude', 'sonnet'), nextEnabled: false });
-
-    const unmarks = opsOfKind(ops, 'managedExcludeUnmark');
-    expect(unmarks).toHaveLength(1);
-    expect(unmarks[0].phase).toBe('before-backend');
-    // mask clear must precede any backend op
-    const beforeBackend = ops.filter((o) => o.phase === 'before-backend').map(kindOf);
-    const backend = ops.filter((o) => o.phase === 'backend').map(kindOf);
-    expect(beforeBackend).toContain('managedExcludeUnmark');
-    expect(backend.length).toBeGreaterThan(0);
-    void phaseOf;
-  });
-});
-
-describe('planAliasSave', () => {
-  test('OpenAI: add enabled (bare) model to a cross-name manual mapping -> only alias entry, no bare re-added', () => {
-    const resource = mkResource('res', 'openaiCompatibility', {
-      models: [{ name: 'gpt-4o' }], // bare entry, model enabled under original name
-    });
-    const state = mkState({ resources: [resource] });
-    const draft: AliasDraft = {
-      alias: 'my-gpt',
-      previousAliasKey: null,
-      baselineAlias: '',
-      isEditing: false,
-      selectedTargets: [mkApiKeyRef('res', 'openaiCompatibility', 'gpt-4o')],
-      suspendedTargets: [],
-    };
-    const { ops } = planAliasSave({ state, draft });
-
-    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
-    expect(modelPuts).toHaveLength(1);
-    if (modelPuts[0].kind === 'apiKeyModelsPut') {
-      // alias entry only; the bare {name: 'gpt-4o'} must NOT be re-added alongside it
-      expect(modelPuts[0].models).toEqual([{ name: 'gpt-4o', alias: 'my-gpt' }]);
-    }
-    // model was not channel-disabled -> no catalog suspend merge
-    expect(opsOfKind(ops, 'catalogSuspendMerge')).toHaveLength(0);
-  });
-
-  test('OpenAI: identity re-enable restores suspended bare entry (original name re-exposed)', () => {
-    const resource = mkResource('res', 'openaiCompatibility', {
-      models: [], // gpt-4o removed when channel-disabled; bare entry stashed
-    });
-    const state = mkState({
-      resources: [resource],
-      accessEntries: [accessEntryWithCatalog('apiKey:res:gpt-4o', [{ name: 'gpt-4o' }])],
-    });
-    const draft: AliasDraft = {
-      alias: 'gpt-4o', // identity mapping (alias === modelId)
-      previousAliasKey: null,
-      baselineAlias: '',
-      isEditing: false,
-      selectedTargets: [mkApiKeyRef('res', 'openaiCompatibility', 'gpt-4o')],
-      suspendedTargets: [],
-    };
-    const { ops } = planAliasSave({ state, draft });
-
-    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
-    expect(modelPuts).toHaveLength(1);
-    if (modelPuts[0].kind === 'apiKeyModelsPut') {
-      // bare entry restored -> original name re-exposed
-      expect(modelPuts[0].models).toEqual([{ name: 'gpt-4o' }]);
-    }
-  });
-
-  test('claude apikey: removing a channel-disabled (suspended) target from the alias keeps it excluded', () => {
-    const resource = mkResource('res', 'claude', {
-      models: [{ name: 'claude-x' }], // bare entry (alias pruned when channel-disabled)
-      excludedModels: ['claude-x'], // channel-disabled -> excluded
-    });
-    const { channel } = suspendedApiKeyTarget('my-claude', 'res', 'claude', 'claude-x');
-    const state = mkState({ resources: [resource], mappingChannels: [channel] });
-    const draft: AliasDraft = {
-      alias: 'my-claude',
-      previousAliasKey: 'my-claude',
-      baselineAlias: 'my-claude',
-      isEditing: true,
-      selectedTargets: [],
-      suspendedTargets: [], // user removed the suspended target
-    };
-    const { ops } = planAliasSave({ state, draft });
-
-    // Before fix: abandoned suspended target -> toClearExclude -> excludedModels drops 'claude-x'
-    // (bare callable entry). After fix: routed through suspendedTargets -> toDisable -> stays excluded.
-    const excludedPatches = opsOfKind(ops, 'apiKeyExcludedPatch');
-    expect(excludedPatches).toHaveLength(1);
-    if (excludedPatches[0].kind === 'apiKeyExcludedPatch') {
-      expect(excludedPatches[0].modelsWithoutStar).toEqual(['claude-x']);
-    }
-    // bare entry stays (claude uses excludedModels, not catalog removal)
-    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
-    modelPuts.forEach((p) => {
-      if (p.kind === 'apiKeyModelsPut') {
-        expect(p.models).not.toContainEqual({ name: 'claude-x', alias: 'my-claude' });
-      }
-    });
-  });
-});
-
-describe('planAliasDelete', () => {
-  test('claude apikey: deleting an alias whose target was channel-disabled keeps it excluded (no bare callable entry)', () => {
-    const resource = mkResource('res', 'claude', {
-      models: [{ name: 'claude-x' }], // bare entry (alias pruned when channel-disabled)
-      excludedModels: ['claude-x'], // channel-disabled -> excluded
-    });
-    const { channel } = suspendedApiKeyTarget('my-claude', 'res', 'claude', 'claude-x');
-    const state = mkState({ resources: [resource], mappingChannels: [channel] });
-    const ops = planAliasDelete({ state, aliasKey: 'my-claude' });
-
-    // Before fix: suspended target treated as abandoned -> toClearExclude -> excludedModels drops
-    // 'claude-x', leaving a bare callable entry. After fix: routed through suspendedTargets ->
-    // toDisable -> 'claude-x' stays in excludedModels.
-    const excludedPatches = opsOfKind(ops, 'apiKeyExcludedPatch');
-    expect(excludedPatches).toHaveLength(1);
-    if (excludedPatches[0].kind === 'apiKeyExcludedPatch') {
-      expect(excludedPatches[0].modelsWithoutStar).toEqual(['claude-x']);
-    }
-    // bare entry is NOT re-added with the deleted alias
-    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
-    modelPuts.forEach((p) => {
-      if (p.kind === 'apiKeyModelsPut') {
-        expect(p.models).not.toContainEqual({ name: 'claude-x', alias: 'my-claude' });
-      }
-    });
-  });
-
-  test('openaiCompatibility: deleting an alias whose target was channel-disabled keeps it removed (no re-add)', () => {
-    const resource = mkResource('res', 'openaiCompatibility', {
-      models: [], // gpt-4o removed when channel-disabled
-    });
-    const { channel } = suspendedApiKeyTarget('my-gpt', 'res', 'openaiCompatibility', 'gpt-4o');
-    const state = mkState({
-      resources: [resource],
-      mappingChannels: [channel],
-      accessEntries: [accessEntryWithCatalog('apiKey:res:gpt-4o', [{ name: 'gpt-4o' }])],
-    });
-    const ops = planAliasDelete({ state, aliasKey: 'my-gpt' });
-
-    // gpt-4o must NOT come back as a callable bare entry
-    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
-    modelPuts.forEach((p) => {
-      if (p.kind === 'apiKeyModelsPut') {
-        expect(p.models).not.toContainEqual({ name: 'gpt-4o' });
-        expect(p.models).not.toContainEqual({ name: 'gpt-4o', alias: 'my-gpt' });
-      }
-    });
-  });
-});
-
-describe('planProviderFormDeltas', () => {
-  test('OpenAI form-disable removes the catalog entry (no bare alias-empty entry)', () => {
-    const resource = mkResource('res', 'openaiCompatibility', {
-      models: [
-        { name: 'gpt-4o', alias: 'my-gpt' },
-        { name: 'gpt-4o-mini' },
-      ],
-    });
-    const state = mkState({ resources: [resource] });
-    const ops = planProviderFormDeltas({
-      state,
-      resource,
-      deltas: [
-        { ref: mkApiKeyRef('res', 'openaiCompatibility', 'gpt-4o'), nextEnabled: false },
-      ],
-    });
-
-    const merges = opsOfKind(ops, 'mappingSuspendMerge');
-    expect(merges).toHaveLength(1);
-    if (merges[0].kind === 'mappingSuspendMerge') {
-      expect(merges[0].entries[0].alias).toBe('my-gpt');
-    }
-    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
-    expect(modelPuts).toHaveLength(1);
-    if (modelPuts[0].kind === 'apiKeyModelsPut') {
-      // entry removed entirely; NOT a bare {name: 'gpt-4o'} with alias emptied
-      expect(modelPuts[0].models).toEqual([{ name: 'gpt-4o-mini' }]);
-    }
-  });
-
-  test('non-OpenAI form-disable keeps bare entry (excludedModels disables routing)', () => {
-    const resource = mkResource('res1', 'gemini', {
-      models: [{ name: 'gemini-2.5-pro', alias: 'my-gemini' }],
-      excludedModels: [],
-    });
-    const state = mkState({ resources: [resource] });
-    const ops = planProviderFormDeltas({
-      state,
-      resource,
-      deltas: [
-        { ref: mkApiKeyRef('res1', 'gemini', 'gemini-2.5-pro'), nextEnabled: false },
-      ],
-    });
-
-    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
-    expect(modelPuts).toHaveLength(1);
-    if (modelPuts[0].kind === 'apiKeyModelsPut') {
-      // bare entry kept; excludedModels (written by form save) disables routing
-      expect(modelPuts[0].models).toEqual([{ name: 'gemini-2.5-pro' }]);
-    }
+  test('provider form planner only snapshots catalog-disabled sources', () => {
+    const ref = apiRef('openai:0', 'openaiCompatibility', 'gpt-4o');
+    const item = resource('openai:0', 'openaiCompatibility', { models: [{ name: 'gpt-4o', alias: 'chat' }] });
+    expect(planProviderFormDeltas({ state: state({ resources: [item] }), resource: item, deltas: [{ ref, nextEnabled: false }] }).map((op) => op.kind)).toEqual(['modelDisabledPut']);
+    const excludeItem = resource('gemini:0', 'gemini', { models: [{ name: 'a', alias: 'chat' }], excludedModels: [] });
+    expect(planProviderFormDeltas({ state: state({ resources: [excludeItem] }), resource: excludeItem, deltas: [{ ref: apiRef('gemini:0', 'gemini', 'a'), nextEnabled: false }] })).toEqual([]);
   });
 });

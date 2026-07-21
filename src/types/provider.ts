@@ -5,7 +5,8 @@
 
 export interface ModelAlias {
   name: string;
-  alias?: string;
+  /** Every normalized model entry has a routing alias; identity aliases use name. */
+  alias: string;
   priority?: number;
   testModel?: string;
   image?: boolean;

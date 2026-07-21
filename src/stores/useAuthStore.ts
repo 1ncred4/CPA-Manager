@@ -249,7 +249,7 @@ export const useAuthStore = create<AuthStoreState>()(
 );
 
 // 监听全局未授权事件
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   window.addEventListener('unauthorized', () => {
     useAuthStore.getState().logout();
   });

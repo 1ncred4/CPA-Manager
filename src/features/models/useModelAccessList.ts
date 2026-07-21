@@ -28,10 +28,8 @@ import {
   filterModelAccessRows,
   type ModelAccessRow,
 } from './modelAccessRows';
-import { reconcileSuspendedCatalogWithModels } from './catalogSuspend';
-import { targetRefFromAccessRow } from './mappingSuspend';
-import { applyManagedIdentityExcludeDisplayMaskWithKeys } from './managedIdentityExclude';
 import type { ModelAccessEntry, ModelDisplayContext } from './modelManagementState';
+import { accessRowToTargetRef } from './modelMapping';
 
 export type UseModelAccessListResult = {
   rows: ModelAccessRow[];
@@ -81,7 +79,6 @@ export function useModelAccessList(): UseModelAccessListResult {
   }, [workbench.snapshot]);
 
   const accessCurrent = useModelManagementStore((s) => s.accessCurrent);
-  const managedExcludeKeys = useModelManagementStore((s) => s.managedExcludeKeys);
   const pendingKeys = useModelManagementStore((s) => s.pendingKeys);
   const loading = useModelManagementStore((s) => s.loading);
   const storeLoad = useModelManagementStore((s) => s.load);
@@ -160,14 +157,9 @@ export function useModelAccessList(): UseModelAccessListResult {
     };
   }, [loadAll]);
 
-  // 数据 / 主题变化时：reconcile catalog 挂起 + 构建 ctx + store.load
+  // 数据 / 主题变化时：构建 ctx + store.load
   useEffect(() => {
     if (!apiBase) return;
-    allApiKeyResources.forEach((resource) => {
-      if (resource.brand !== 'openaiCompatibility') return;
-      reconcileSuspendedCatalogWithModels(apiBase, resource.id, resource.models ?? []);
-    });
-
     const resourceById = new Map(allApiKeyResources.map((r) => [r.id, r]));
     const oauthDisplayNames: Record<string, Record<string, string>> = {};
     Object.entries(oauthModels).forEach(([channelRaw, models]) => {
@@ -236,15 +228,15 @@ export function useModelAccessList(): UseModelAccessListResult {
             lockReason: e.lockReason ?? 'unsupported',
           };
         });
-    return applyManagedIdentityExcludeDisplayMaskWithKeys(projected, managedExcludeKeys);
-  }, [accessCurrent, oauthExcludedError, managedExcludeKeys]);
+    return projected;
+  }, [accessCurrent, oauthExcludedError]);
 
   const filteredRows = useMemo(() => filterModelAccessRows(rows, search), [rows, search]);
 
   const toggleRow = useCallback(
     async (row: ModelAccessRow, enabled: boolean) => {
-      if (disableControls || row.toggleDisabled || !row.supportsExclude) return;
-      const ref = targetRefFromAccessRow(row);
+      if (disableControls || row.toggleDisabled) return;
+      const ref = accessRowToTargetRef(row);
       if (!ref) return;
 
       const result = await toggleAccess(ref, enabled);

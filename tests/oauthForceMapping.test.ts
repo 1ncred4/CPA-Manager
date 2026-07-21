@@ -24,4 +24,20 @@ describe('OAuth model alias force mapping', () => {
       { name: 'gpt-source-2', alias: 'gpt-alias-2', 'force-mapping': false },
     ]);
   });
+
+  test('keeps duplicate aliases when model names differ in one OAuth channel', () => {
+    const normalized = normalizeOauthModelAlias({
+      'oauth-model-alias': {
+        claude: [
+          { name: 'model-a', alias: 'shared' },
+          { name: 'model-b', alias: 'shared' },
+          { name: 'model-a', alias: 'shared' },
+        ],
+      },
+    });
+    expect(normalized.claude).toEqual([
+      { name: 'model-a', alias: 'shared' },
+      { name: 'model-b', alias: 'shared' },
+    ]);
+  });
 });

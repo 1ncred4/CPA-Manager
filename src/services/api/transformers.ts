@@ -23,7 +23,7 @@ const normalizeModelAliases = (models: unknown): ModelAlias[] => {
       if (item === undefined || item === null) return null;
       if (typeof item === 'string') {
         const trimmed = item.trim();
-        return trimmed ? ({ name: trimmed } satisfies ModelAlias) : null;
+        return trimmed ? ({ name: trimmed, alias: trimmed } satisfies ModelAlias) : null;
       }
       if (!isRecord(item)) return null;
 
@@ -34,10 +34,11 @@ const normalizeModelAliases = (models: unknown): ModelAlias[] => {
       const testModel = item['test-model'];
       const image = normalizeBoolean(item.image);
       const thinking = normalizeRecord(item.thinking);
-      const entry: ModelAlias = { name: String(name) };
-      if (alias && alias !== name) {
-        entry.alias = String(alias);
-      }
+      const normalizedName = String(name);
+      const entry: ModelAlias = {
+        name: normalizedName,
+        alias: alias ? String(alias) : normalizedName,
+      };
       if (priority !== undefined) {
         const parsed = Number(priority);
         if (Number.isFinite(parsed)) {

@@ -8,7 +8,6 @@ import type { ProviderBrand, ProviderResource } from '@/features/providers/types
 import type { AuthFileModelItem } from '@/features/authFiles/constants';
 import { normalizeProviderKey } from '@/features/authFiles/constants';
 import type { ModelAccessRow } from './modelAccessRows';
-import { isManagedNativeOffAlias } from './managedNativeOffAlias';
 
 export type MappingTargetSource = 'oauth' | 'apiKey';
 
@@ -40,23 +39,11 @@ export type MappingTarget = MappingTargetRef & {
   suspended?: boolean;
 };
 
-/** 手动：后端有自定义 alias；自动：未入手动的模型按 modelId 聚合（同名合并） */
-export type MappingRowKind = 'manual' | 'auto';
-
 export type FederatedMappingRow = {
   /** 自定义模型名（alias），大小写按首次见到的原文保留 */
   alias: string;
   aliasKey: string;
   targets: MappingTarget[];
-  /** 手动 / 自动；缺省时由 hasConfiguredTargets 推断 */
-  kind?: MappingRowKind;
-  /**
-   * 行内是否存在后端可持久化的目标（alias ≠ modelId）。
-   * false 表示纯同名自动联邦 / 仅挂起灰标，删除时不应调用后端。
-   */
-  hasConfiguredTargets?: boolean;
-  /** 行是否包含前端同名自动联邦目标（多来源同 modelId） */
-  hasAutoSameNameTargets?: boolean;
 };
 
 export type MappingPickerOption = MappingTargetRef & {
@@ -74,10 +61,7 @@ export type MappingTargetDiff = {
 export type MappingValidationError =
   | 'alias_required'
   | 'no_targets'
-  | 'duplicate_alias'
-  | 'channel_conflict'
-  /** 自定义名与全部目标模型 ID 相同：后端/序列化会丢弃，映射无法落库 */
-  | 'identity_only';
+  | 'duplicate_alias';
 
 const lower = (value: string): string => value.trim().toLowerCase();
 
@@ -85,17 +69,19 @@ export function toAliasKey(alias: string): string {
   return lower(alias);
 }
 
-/** 目标模型 ID 与自定义名相同：无需（也无法）作为 alias 持久化 */
+/** 目标模型 ID 与自定义名相同，属于 identity 来源。 */
 export function isIdentityMappingTarget(alias: string, target: MappingTargetRef): boolean {
   return Boolean(toAliasKey(alias)) && lower(target.modelId) === toAliasKey(alias);
 }
 
-/** 仅保留可写回后端的目标（alias ≠ modelId） */
+/** 保留所有目标；v2 会同时持久化 identity alias。 */
 export function filterPersistableMappingTargets(
-  alias: string,
+  _alias: string,
   targets: MappingTargetRef[]
 ): MappingTargetRef[] {
-  return targets.filter((target) => !isIdentityMappingTarget(alias, target));
+  // v2 writes identity aliases as well.  Keep this helper for callers that use
+  // it as a normalization boundary, but no target is discarded anymore.
+  return targets;
 }
 
 export function mappingTargetKey(ref: MappingTargetRef): string {
@@ -176,10 +162,8 @@ export function buildFederatedMappingRows(
 
     entries.forEach((entry) => {
       const modelId = String(entry?.name ?? '').trim();
-      const alias = String(entry?.alias ?? '').trim();
-      if (!modelId || !alias) return;
-      // 历史 cpa.off 锚点（若仍残留）不进入映射列表
-      if (isManagedNativeOffAlias(alias)) return;
+      const alias = String(entry?.alias ?? modelId).trim() || modelId;
+      if (!modelId) return;
 
       const ref: OauthMappingTargetRef = { source: 'oauth', channel, modelId };
       const tKey = mappingTargetKey(ref);
@@ -207,8 +191,8 @@ export function buildFederatedMappingRows(
 
     models.forEach((model) => {
       const modelId = String(model?.name ?? '').trim();
-      const alias = String(model?.alias ?? '').trim();
-      if (!modelId || !isMeaningfulAlias(alias, modelId)) return;
+      const alias = String(model?.alias ?? modelId).trim() || modelId;
+      if (!modelId) return;
 
       const ref: ApiKeyMappingTargetRef = {
         source: 'apiKey',
@@ -401,30 +385,11 @@ export function validateMappingSelection(input: {
   if (!input.targets.length) return 'no_targets';
 
   // CPA 序列化/OAuth 存储都会丢弃 alias===name；若全部目标都是同名，保存必然不生效。
-  if (filterPersistableMappingTargets(alias, input.targets).length === 0) {
-    return 'identity_only';
-  }
-
   const aliasKey = toAliasKey(alias);
   if (aliasKey !== (input.editingAliasKey ?? null)) {
     for (const existing of input.existingAliasKeys) {
       if (existing === aliasKey) return 'duplicate_alias';
     }
-  }
-
-  // OAuth channel still enforces one source model per alias (backend uniqueness).
-  // API Key entries may map multiple models to the same custom alias.
-  // Identity targets (alias===modelId) are not persisted; ignore them for channel uniqueness.
-  const oauthChannels = new Map<string, string>();
-
-  for (const target of input.targets) {
-    if (target.source !== 'oauth') continue;
-    if (isIdentityMappingTarget(alias, target)) continue;
-    const channel = normalizeProviderKey(target.channel);
-    const modelKey = lower(target.modelId);
-    const prev = oauthChannels.get(channel);
-    if (prev && prev !== modelKey) return 'channel_conflict';
-    oauthChannels.set(channel, modelKey);
   }
 
   return null;
@@ -447,10 +412,7 @@ export function applyOauthAliasTargetChanges(input: {
 }): OAuthModelAliasEntry[] {
   const aliasKey = toAliasKey(input.alias);
   const aliasLiteral = input.alias.trim();
-  // Backend drops alias===name; never write identity entries.
-  const nextModelIds = input.nextModelIds
-    .map((id) => id.trim())
-    .filter((id) => id && lower(id) !== aliasKey);
+  const nextModelIds = input.nextModelIds.map((id) => id.trim()).filter(Boolean);
 
   const preserved: OAuthModelAliasEntry[] = [];
   const existingByName = new Map<string, OAuthModelAliasEntry>();
@@ -458,21 +420,18 @@ export function applyOauthAliasTargetChanges(input: {
   input.entries.forEach((entry) => {
     const name = String(entry.name ?? '').trim();
     const entryAlias = String(entry.alias ?? '').trim();
-    if (!name || !entryAlias) return;
-    // Drop residual identity bindings for this alias or any entry.
-    if (lower(name) === toAliasKey(entryAlias)) return;
+    if (!name) return;
+    const normalizedEntry = { ...entry, name, alias: entryAlias || name };
     if (toAliasKey(entryAlias) === aliasKey) {
-      existingByName.set(lower(name), entry);
+      existingByName.set(lower(name), normalizedEntry);
       return;
     }
-    preserved.push(entry);
+    preserved.push(normalizedEntry);
   });
 
   const nextForAlias: OAuthModelAliasEntry[] = [];
   nextModelIds.forEach((id) => {
     const prev = existingByName.get(lower(id));
-    // fork=true 表示同时保留原模型名；新建映射默认关闭，原名不再对外启用。
-    // 仅当既有条目已显式开启时才保留（编辑/重绑同名目标时不丢用户设置）。
     const entry: OAuthModelAliasEntry = {
       name: id,
       alias: aliasLiteral,
@@ -497,7 +456,7 @@ export function applyOauthAliasTargetChanges(input: {
  * 编辑渠道 a 时不得覆盖/删除渠道 b 的条目。
  *
  * - 若 nextModelIds 含目录中不存在的模型，则追加条目
- * - identity（alias===name）不会写入
+ * - identity（alias===name）也会写入，作为 v2 的自动/显式 identity 来源。
  */
 export function applyApiKeyModelAliasChanges(input: {
   models: ModelAlias[];
@@ -513,12 +472,7 @@ export function applyApiKeyModelAliasChanges(input: {
   const prevAliasKey = input.previousAliasKey ? toAliasKey(input.previousAliasKey) : aliasKey;
   void input.previousModelIds;
 
-  const nextModelKeys = new Set(
-    input.nextModelIds
-      .map((id) => id.trim())
-      .filter((id) => id && lower(id) !== aliasKey)
-      .map(lower)
-  );
+  const nextModelKeys = new Set(input.nextModelIds.map((id) => id.trim()).filter(Boolean).map(lower));
 
   const isEditedAliasKey = (key: string): boolean =>
     Boolean(key) && (key === aliasKey || key === prevAliasKey);
@@ -528,33 +482,19 @@ export function applyApiKeyModelAliasChanges(input: {
   const namePresent = new Set<string>();
   /** nameKey → 是否已有「当前 alias」条目 */
   const holdsThisAlias = new Set<string>();
-  /** nameKey → 结果中可升级为当前 alias 的无 alias 条目下标 */
-  const bareIndexByName = new Map<string, number>();
-
-  const stripAlias = (model: ModelAlias): ModelAlias => {
-    const { alias: _drop, ...rest } = model as ModelAlias & { alias?: string };
-    void _drop;
-    const next: ModelAlias = { ...rest, name: model.name };
-    delete (next as { alias?: string }).alias;
-    return next;
-  };
+  const normalizeEntry = (model: ModelAlias): ModelAlias => ({
+    ...model,
+    name: String(model.name ?? '').trim(),
+    alias: String(model.alias ?? model.name ?? '').trim() || String(model.name ?? '').trim(),
+  });
 
   input.models.forEach((model) => {
     const name = String(model.name ?? '').trim();
     if (!name) return;
     const nameKey = lower(name);
-    const currentAlias = String(model.alias ?? '').trim();
-    const currentAliasKey = currentAlias ? toAliasKey(currentAlias) : '';
-
-    // 丢弃 identity 残留
-    if (currentAliasKey && currentAliasKey === nameKey) {
-      if (!namePresent.has(nameKey)) {
-        result.push(stripAlias(model));
-        namePresent.add(nameKey);
-        bareIndexByName.set(nameKey, result.length - 1);
-      }
-      return;
-    }
+    const normalized = normalizeEntry(model);
+    const currentAlias = normalized.alias;
+    const currentAliasKey = toAliasKey(currentAlias);
 
     // 属于正在编辑的 alias：先拿掉，后面按 nextModelIds 再加回
     if (isEditedAliasKey(currentAliasKey)) {
@@ -562,36 +502,30 @@ export function applyApiKeyModelAliasChanges(input: {
     }
 
     // 其它有意义 alias：原样保留（多渠道）
-    if (currentAliasKey && isMeaningfulAlias(currentAlias, name)) {
-      result.push(model);
+    if (currentAliasKey) {
+      result.push(normalized);
       namePresent.add(nameKey);
-      bareIndexByName.delete(nameKey);
       return;
     }
-
-    // 无 alias 条目：保留，供后续升级
-    result.push(stripAlias(model));
+    result.push({ ...normalized, alias: name });
     namePresent.add(nameKey);
-    if (!bareIndexByName.has(nameKey)) {
-      bareIndexByName.set(nameKey, result.length - 1);
-    }
   });
 
   // 为 nextModelIds 确保存在「name + 当前 alias」条目
   nextModelKeys.forEach((nameKey) => {
     if (holdsThisAlias.has(nameKey)) return;
 
-    const bareIdx = bareIndexByName.get(nameKey);
-    if (bareIdx !== undefined) {
-      const prev = result[bareIdx];
-      result[bareIdx] = { ...prev, alias: aliasLiteral };
-      bareIndexByName.delete(nameKey);
+    const identityIndex = result.findIndex(
+      (entry) => lower(entry.name) === nameKey && lower(entry.alias) === nameKey
+    );
+    if (identityIndex >= 0) {
+      result[identityIndex] = { ...result[identityIndex], alias: aliasLiteral };
       holdsThisAlias.add(nameKey);
       namePresent.add(nameKey);
       return;
     }
 
-    // 已有其它 alias 的同名条目，或目录中尚无此模型：追加一条，不覆盖其它渠道
+    // 已有其它 alias 的同名条目，或目录中尚无此模型：追加一条，不覆盖其它渠道。
     const originalName =
       input.nextModelIds.map((id) => id.trim()).find((id) => lower(id) === nameKey) || nameKey;
     result.push({ name: originalName, alias: aliasLiteral });
@@ -599,18 +533,29 @@ export function applyApiKeyModelAliasChanges(input: {
     namePresent.add(nameKey);
   });
 
-  // 被移出当前 alias、且结果中已无任何条目的模型：补回裸 name，避免从提供商模型列表消失
+  // 被移出当前 alias 且结果中已无条目的模型，补回 identity alias，保证每个模型仍有 alias。
   input.models.forEach((model) => {
     const name = String(model.name ?? '').trim();
     if (!name) return;
     const nameKey = lower(name);
     if (namePresent.has(nameKey)) return;
     if (nextModelKeys.has(nameKey)) return;
-    result.push(stripAlias(model));
+    result.push({ ...normalizeEntry(model), alias: name });
     namePresent.add(nameKey);
   });
 
-  return result;
+  const aliasesByName = new Map<string, string[]>();
+  result.forEach((entry) => {
+    const key = lower(entry.name);
+    const list = aliasesByName.get(key) ?? [];
+    list.push(entry.alias);
+    aliasesByName.set(key, list);
+  });
+  return result.filter((entry) => {
+    const aliases = aliasesByName.get(lower(entry.name)) ?? [];
+    const hasNonIdentity = aliases.some((alias) => lower(alias) !== lower(entry.name));
+    return lower(entry.name) !== lower(entry.alias) || !hasNonIdentity;
+  });
 }
 
 /** 从 oauth definitions 构建 channel → modelIdLower → displayName */
@@ -749,69 +694,6 @@ export function attachNativeIdentityTargets(
   });
 }
 
-/**
- * 自动映射渠道：尚未被手动映射覆盖的已启用模型，按 modelId 聚合（同名合并）。
- * 单来源也会生成渠道；不写后端 alias。
- *
- * @param coveredTargetKeys 已出现在手动映射行中的目标 key
- * @param manualAliasKeys 已有手动渠道的 aliasKey（这些名字不再单独出现自动渠道，同名已并入手动）
- */
-export function buildAutoMappingRows(
-  accessRows: ModelAccessRow[],
-  coveredTargetKeys: Set<string>,
-  manualAliasKeys?: Iterable<string>
-): FederatedMappingRow[] {
-  const manualKeys = new Set(
-    Array.from(manualAliasKeys ?? [])
-      .map((k) => toAliasKey(k))
-      .filter(Boolean)
-  );
-  const groups = new Map<string, { alias: string; targets: MappingTarget[]; seen: Set<string> }>();
-
-  accessRows.forEach((row) => {
-    const target = accessRowToMappingTarget(row);
-    if (!target) return;
-    const tKey = mappingTargetKey(target);
-    if (coveredTargetKeys.has(tKey)) return;
-    const aliasKey = lower(target.modelId);
-    if (!aliasKey || manualKeys.has(aliasKey)) return;
-    let bucket = groups.get(aliasKey);
-    if (!bucket) {
-      bucket = { alias: target.modelId.trim(), targets: [], seen: new Set() };
-      groups.set(aliasKey, bucket);
-    }
-    if (bucket.seen.has(tKey)) return;
-    bucket.seen.add(tKey);
-    bucket.targets.push(target);
-  });
-
-  const rows: FederatedMappingRow[] = [];
-  groups.forEach((bucket, aliasKey) => {
-    if (!bucket.targets.length) return;
-    rows.push({
-      alias: bucket.alias,
-      aliasKey,
-      targets: sortMappingTargets(bucket.targets),
-      kind: 'auto',
-      hasConfiguredTargets: false,
-      hasAutoSameNameTargets: true,
-    });
-  });
-
-  rows.sort((a, b) => a.alias.localeCompare(b.alias, undefined, { sensitivity: 'base' }));
-  return rows;
-}
-
-/** @deprecated 使用 buildAutoMappingRows */
-export function buildSameNameFederatedRows(
-  accessRows: ModelAccessRow[],
-  dismissedAliasKeys?: Iterable<string>
-): FederatedMappingRow[] {
-  // 兼容旧调用：忽略 dismiss，按「全部未覆盖 + 至少 2 源」不再限制；委托新逻辑
-  void dismissedAliasKeys;
-  return buildAutoMappingRows(accessRows, new Set(), []);
-}
-
 /** 按 aliasKey 合并多组联邦行，目标去重 */
 export function mergeFederatedMappingRows(
   ...groups: FederatedMappingRow[][]
@@ -822,8 +704,6 @@ export function mergeFederatedMappingRows(
       alias: string;
       targets: MappingTarget[];
       seen: Set<string>;
-      hasConfiguredTargets: boolean;
-      hasAutoSameNameTargets: boolean;
     }
   >();
 
@@ -835,13 +715,9 @@ export function mergeFederatedMappingRows(
           alias: row.alias,
           targets: [],
           seen: new Set(),
-          hasConfiguredTargets: false,
-          hasAutoSameNameTargets: false,
         };
         buckets.set(row.aliasKey, bucket);
       }
-      if (row.hasConfiguredTargets) bucket.hasConfiguredTargets = true;
-      if (row.hasAutoSameNameTargets) bucket.hasAutoSameNameTargets = true;
       row.targets.forEach((target) => {
         const tKey = mappingTargetKey(target);
         if (bucket!.seen.has(tKey)) return;
@@ -852,111 +728,14 @@ export function mergeFederatedMappingRows(
   });
 
   const merged: FederatedMappingRow[] = Array.from(buckets.entries()).map(([aliasKey, bucket]) => {
-    const targets = sortMappingTargets(bucket.targets);
-    // 若调用方未标记，按目标是否 identity 推断「是否有可持久化目标」
-    const inferredConfigured =
-      bucket.hasConfiguredTargets ||
-      targets.some(
-        (t) => !t.suspended && !isIdentityMappingTarget(bucket.alias, t)
-      );
     return {
       alias: bucket.alias,
       aliasKey,
-      targets,
-      hasConfiguredTargets: inferredConfigured,
-      hasAutoSameNameTargets: bucket.hasAutoSameNameTargets,
+      targets: sortMappingTargets(bucket.targets),
     };
   });
   merged.sort((a, b) => a.alias.localeCompare(b.alias, undefined, { sensitivity: 'base' }));
   return merged;
-}
-
-/**
- * 列表用完整聚合：手动（配置别名 + 本地认领 + 同名挂载）与自动（未覆盖模型按名聚合）分列。
- * 手动渠道名与 modelId 相同时，同名提供商模型并入手动行，不再单独出现自动渠道。
- * 删除手动后，这些模型会回到自动渠道。
- *
- * @param claimedAliasKeys 用户认领为手动的渠道（含纯同名，后端无法写 alias===name）
- */
-export function assembleManualAndAutoMappingRows(
-  configuredRows: FederatedMappingRow[],
-  accessRows: ModelAccessRow[],
-  claimedAliasKeys?: Iterable<string>
-): { manualRows: FederatedMappingRow[]; autoRows: FederatedMappingRow[] } {
-  const claims = new Set(
-    Array.from(claimedAliasKeys ?? [])
-      .map((k) => toAliasKey(k))
-      .filter(Boolean)
-  );
-
-  const manualBase = configuredRows.map((row) => ({
-    ...row,
-    kind: 'manual' as const,
-    hasConfiguredTargets:
-      row.hasConfiguredTargets ??
-      row.targets.some((t) => !t.suspended && !isIdentityMappingTarget(row.alias, t)),
-  }));
-
-  // 认领为手动、但后端尚无配置行：用同名启用模型撑起渠道
-  const existingKeys = new Set(manualBase.map((r) => r.aliasKey));
-  claims.forEach((aliasKey) => {
-    if (existingKeys.has(aliasKey)) return;
-    const natives = accessRows
-      .map((row) => accessRowToMappingTarget(row))
-      .filter((t): t is MappingTarget => Boolean(t) && lower(t!.modelId) === aliasKey);
-    if (!natives.length) return;
-    manualBase.push({
-      alias: natives[0].modelId.trim(),
-      aliasKey,
-      targets: sortMappingTargets(natives),
-      kind: 'manual',
-      hasConfiguredTargets: false,
-      hasAutoSameNameTargets: natives.length > 1,
-    });
-    existingKeys.add(aliasKey);
-  });
-
-  // 同名原生模型挂到手动行（如手动 gpt-image-2 + Codex/OpenAI 的 gpt-image-2）
-  const manualRows = attachNativeIdentityTargets(manualBase, accessRows).map((row) => ({
-    ...row,
-    kind: 'manual' as const,
-    hasConfiguredTargets: row.hasConfiguredTargets !== false,
-  }));
-
-  const covered = collectMappedTargetKeys(manualRows);
-  const manualAliasKeys = manualRows.map((r) => r.aliasKey);
-  const autoRows = buildAutoMappingRows(accessRows, covered, manualAliasKeys);
-
-  return { manualRows, autoRows };
-}
-
-/**
- * 兼容旧调用：手动 + 自动扁平为一张表（自动在后）。
- */
-export function assembleFederatedMappingRows(
-  configuredRows: FederatedMappingRow[],
-  accessRows: ModelAccessRow[],
-  _dismissedAliasKeys?: Iterable<string>
-): FederatedMappingRow[] {
-  void _dismissedAliasKeys;
-  const { manualRows, autoRows } = assembleManualAndAutoMappingRows(configuredRows, accessRows);
-  return [...manualRows, ...autoRows];
-}
-
-export function isManualMappingRow(row: FederatedMappingRow): boolean {
-  if (row.kind === 'manual') return true;
-  if (row.kind === 'auto') return false;
-  return rowHasConfiguredTargets(row);
-}
-
-export function isAutoMappingRow(row: FederatedMappingRow): boolean {
-  return !isManualMappingRow(row);
-}
-
-/** 行内是否存在后端真正写过的配置（可被删除/清理） */
-export function rowHasConfiguredTargets(row: FederatedMappingRow): boolean {
-  if (typeof row.hasConfiguredTargets === 'boolean') return row.hasConfiguredTargets;
-  return row.targets.some((t) => !t.suspended && !isIdentityMappingTarget(row.alias, t));
 }
 
 /**
