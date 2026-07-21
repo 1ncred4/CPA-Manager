@@ -165,7 +165,6 @@ function upsertAliasBindings(
 
 function normalizeOauthIdentityEntries(
   entries: OAuthModelAliasEntry[],
-  modelIds: string[],
   explicitIdentityKeys: Set<string>,
   channel: string,
   disabledKeys: Set<string> = new Set()
@@ -177,11 +176,12 @@ function normalizeOauthIdentityEntries(
       alias: String(entry.alias ?? entry.name ?? '').trim() || String(entry.name ?? '').trim(),
     }))
     .filter((entry) => entry.name && entry.alias);
-  const ids = new Map<string, string>();
-  [...modelIds, ...normalized.map((entry) => entry.name)].forEach((id) => {
-    const trimmed = id.trim();
-    if (trimmed) ids.set(lower(trimmed), trimmed);
-  });
+
+  // The OAuth model definition catalog is a display/selection source, not an
+  // alias backend source. Only entries already present in the backend map (or
+  // explicitly selected by the user before this function is called) belong in
+  // the persisted alias list. Seeding every catalog model here turns a normal
+  // mapping edit into a full-channel PUT of identity aliases.
   const result = normalized.filter((entry) => {
     if (!same(entry.name, entry.alias)) return true;
     const key = accessEnabledKey({ source: 'oauth', channel, modelId: entry.name });
@@ -190,17 +190,6 @@ function normalizeOauthIdentityEntries(
       (!disabledKeys.has(mappingTargetKey({ source: 'oauth', channel, modelId: entry.name })) &&
         !normalized.some((other) => same(other.name, entry.name) && !same(other.name, other.alias)))
     );
-  });
-  ids.forEach((modelId, modelKey) => {
-    if (result.some((entry) => same(entry.name, modelId) && same(entry.alias, modelId))) return;
-    const key = accessEnabledKey({ source: 'oauth', channel, modelId });
-    if (
-      explicitIdentityKeys.has(key) ||
-      (!disabledKeys.has(mappingTargetKey({ source: 'oauth', channel, modelId })) &&
-        !normalized.some((entry) => same(entry.name, modelKey) && !same(entry.name, entry.alias)))
-    ) {
-      result.push({ name: modelId, alias: modelId });
-    }
   });
   return dedupeEntries(result);
 }
@@ -324,7 +313,6 @@ function snapshotWithAlias(
     snapshot.target.source === 'oauth'
       ? normalizeOauthIdentityEntries(
           withoutOld as OAuthModelAliasEntry[],
-          [],
           new Set(),
           snapshot.target.channel
         )
@@ -508,10 +496,8 @@ function planAliasBackendForSource(
       let entries = state.oauthAliasMap[channel] ?? [];
       entries = removeAliases(entries, aliasNames);
       entries = upsertAliasBindings(entries, finalAlias, selectedBySource.get(sourceKey) ?? [], disabledKeys);
-      const modelIds = state.catalogs.oauthModels[channel]?.map((model) => model.id) ?? [];
       entries = normalizeOauthIdentityEntries(
         entries,
-        modelIds,
         explicitIdentityKeys,
         channel,
         disabledKeys

@@ -61,6 +61,22 @@ describe('v2 model access planner', () => {
     expect(patch).toMatchObject({ entries: expect.arrayContaining([{ name: 'a', alias: 'chat' }, { name: 'b', alias: 'chat' }]) });
   });
 
+  test('OAuth mapping save does not persist untouched static catalog identities', () => {
+    const ops = planAliasSave({
+      state: state({}),
+      draft: {
+        alias: 'chat',
+        previousAliasKey: null,
+        baselineAlias: '',
+        isEditing: false,
+        selectedTargets: [oauthRef('claude', 'a')],
+        disabledTargets: [],
+      },
+    });
+    const patch = ops.ops.find((op) => op.kind === 'oauthAliasPatch');
+    expect(patch).toMatchObject({ entries: [{ name: 'a', alias: 'chat' }] });
+  });
+
   test('mapping target disable stores exact alias binding and restore removes only that binding', () => {
     const ref = apiRef('gemini:0', 'gemini', 'a');
     const mapping = { byAliasKey: new Map([['chat', { alias: 'chat', aliasKey: 'chat', targets: [{ ...ref, displayName: 'a', providerLabel: 'Gemini', iconSrc: null, suspended: false }] }]]) };
