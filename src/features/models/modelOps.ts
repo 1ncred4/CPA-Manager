@@ -971,7 +971,12 @@ function planSingleProviderFormDelta(
       target: ref,
     });
     if (!bindings.length) return;
-    const { next } = pruneApiKeyModelsForModel(models, ref.modelId);
+    // openaiCompatibility 无 excludedModels：裸 {name} 条目仍可被路由调用，禁用须整条摘除
+    // （与 planOpenAiCatalogToggle 一致）；其它 apiKey brand 保留裸条目，由 excludedModels 关闭路由。
+    const { next } =
+      resource.brand === 'openaiCompatibility'
+        ? removeModelFromCatalog(models, ref.modelId)
+        : pruneApiKeyModelsForModel(models, ref.modelId);
     out.push({
       kind: 'mappingSuspendMerge',
       phase: 'before-backend',

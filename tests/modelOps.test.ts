@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { planAccessToggle, planAliasSave, type AliasDraft, type ModelOp } from '../src/features/models/modelOps';
+import { planAccessToggle, planAliasSave, planProviderFormDeltas, type AliasDraft, type ModelOp } from '../src/features/models/modelOps';
 import type {
   ModelAccessEntry,
   ModelManagementState,
@@ -371,6 +371,59 @@ describe('planAliasSave', () => {
     if (modelPuts[0].kind === 'apiKeyModelsPut') {
       // bare entry restored -> original name re-exposed
       expect(modelPuts[0].models).toEqual([{ name: 'gpt-4o' }]);
+    }
+  });
+});
+
+describe('planProviderFormDeltas', () => {
+  test('OpenAI form-disable removes the catalog entry (no bare alias-empty entry)', () => {
+    const resource = mkResource('res', 'openaiCompatibility', {
+      models: [
+        { name: 'gpt-4o', alias: 'my-gpt' },
+        { name: 'gpt-4o-mini' },
+      ],
+    });
+    const state = mkState({ resources: [resource] });
+    const ops = planProviderFormDeltas({
+      state,
+      resource,
+      deltas: [
+        { ref: mkApiKeyRef('res', 'openaiCompatibility', 'gpt-4o'), nextEnabled: false },
+      ],
+    });
+
+    const merges = opsOfKind(ops, 'mappingSuspendMerge');
+    expect(merges).toHaveLength(1);
+    if (merges[0].kind === 'mappingSuspendMerge') {
+      expect(merges[0].entries[0].alias).toBe('my-gpt');
+    }
+    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
+    expect(modelPuts).toHaveLength(1);
+    if (modelPuts[0].kind === 'apiKeyModelsPut') {
+      // entry removed entirely; NOT a bare {name: 'gpt-4o'} with alias emptied
+      expect(modelPuts[0].models).toEqual([{ name: 'gpt-4o-mini' }]);
+    }
+  });
+
+  test('non-OpenAI form-disable keeps bare entry (excludedModels disables routing)', () => {
+    const resource = mkResource('res1', 'gemini', {
+      models: [{ name: 'gemini-2.5-pro', alias: 'my-gemini' }],
+      excludedModels: [],
+    });
+    const state = mkState({ resources: [resource] });
+    const ops = planProviderFormDeltas({
+      state,
+      resource,
+      deltas: [
+        { ref: mkApiKeyRef('res1', 'gemini', 'gemini-2.5-pro'), nextEnabled: false },
+      ],
+    });
+
+    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
+    expect(modelPuts).toHaveLength(1);
+    if (modelPuts[0].kind === 'apiKeyModelsPut') {
+      // bare entry kept; excludedModels (written by form save) disables routing
+      expect(modelPuts[0].models).toEqual([{ name: 'gemini-2.5-pro' }]);
     }
   });
 });
