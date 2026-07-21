@@ -119,6 +119,8 @@ export interface ModelEntryInput {
    * Saved as excludedModels (most brands) or models[] catalog suspend (openaiCompatibility).
    */
   enabled?: boolean;
+  /** UI-only hint for a model omitted from backend models[] by mapping pruning. */
+  backendOmitted?: boolean;
 }
 
 export interface ApiKeyEntryInput {

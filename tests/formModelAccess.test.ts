@@ -97,4 +97,22 @@ describe('formModelAccess', () => {
     expect(entries).toHaveLength(2);
     expect(entries[0].alias).toBe('chan-a');
   });
+
+  test('appends mapping-pruned catalog hints as enabled and backend-omitted', () => {
+    const rows = modelsToFormEntriesWithAccess({
+      models: [],
+      catalogOnlyModelIds: ['MiniMax-M3'],
+    });
+
+    expect(rows).toEqual([{ name: 'MiniMax-M3', enabled: true, backendOmitted: true }]);
+  });
+
+  test('does not treat mapping-pruned catalog hints as enabled backend catalog names', () => {
+    const rows = modelsToFormEntriesWithAccess({
+      models: [],
+      catalogOnlyModelIds: ['MiniMax-M3'],
+    });
+
+    expect(filterEnabledCatalogNames(rows)).toEqual([]);
+  });
 });

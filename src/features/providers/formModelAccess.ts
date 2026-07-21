@@ -4,7 +4,10 @@
  */
 
 import { stripDisableAllModelsRule } from '@/components/providers/utils';
-import { loadModelDisabledSnapshots } from '@/features/models/modelDisabledState';
+import {
+  loadMappingDisabled,
+  loadModelDisabledSnapshots,
+} from '@/features/models/modelDisabledState';
 import type { ModelAlias } from '@/types';
 import type { ModelEntryInput } from './types';
 
@@ -84,6 +87,8 @@ export type FormModelsLoadOptions = {
   exactExcludedIds?: Iterable<string>;
   /** Catalog-suspended models to append as enabled=false (openaiCompatibility). */
   suspendedCatalog?: Array<{ modelId: string; entries: ModelAlias[] }>;
+  /** Models omitted from backend models[] by manual mapping pruning. */
+  catalogOnlyModelIds?: Iterable<string>;
 };
 
 /**
@@ -98,6 +103,12 @@ export function modelsToFormEntriesWithAccess(options: FormModelsLoadOptions): M
       .filter(Boolean)
   );
   const seen = new Map<string, number>();
+  const catalogOnly = new Map<string, string>();
+  Array.from(options.catalogOnlyModelIds ?? []).forEach((id) => {
+    const modelId = String(id ?? '').trim();
+    const key = lower(modelId);
+    if (key && !catalogOnly.has(key)) catalogOnly.set(key, modelId);
+  });
   const out: ModelEntryInput[] = [];
 
   (options.models ?? []).forEach((m) => {
@@ -165,14 +176,26 @@ export function modelsToFormEntriesWithAccess(options: FormModelsLoadOptions): M
     out.push(entry);
   });
 
+  catalogOnly.forEach((modelId, key) => {
+    if (seen.has(key)) return;
+    seen.set(key, out.length);
+    out.push({
+      name: modelId,
+      enabled: !excluded.has(key),
+      backendOmitted: true,
+    });
+  });
+
   return out.length ? out : [{ name: '', enabled: true }];
 }
 
 /** Catalog names that should remain in models[] for openai (enabled only). */
-export function filterEnabledCatalogNames(models: ModelEntryInput[] | undefined): ModelEntryInput[] {
+export function filterEnabledCatalogNames(
+  models: ModelEntryInput[] | undefined
+): ModelEntryInput[] {
   return (models ?? []).filter((entry) => {
     const name = String(entry.name ?? '').trim();
-    return Boolean(name) && entry.enabled !== false;
+    return Boolean(name) && entry.enabled !== false && entry.backendOmitted !== true;
   });
 }
 
@@ -217,6 +240,35 @@ export function loadSuspendedCatalogSafe(
 ): Array<{ modelId: string; entries: ModelAlias[] }> {
   if (!apiBase || !resourceId) return [];
   return Array.from(loadModelDisabledSnapshots(apiBase).values())
-    .filter((snapshot) => snapshot.target.source === 'apiKey' && snapshot.target.resourceId === resourceId)
-    .map((snapshot) => ({ modelId: snapshot.target.modelId, entries: snapshot.entries as ModelAlias[] }));
+    .filter(
+      (snapshot) => snapshot.target.source === 'apiKey' && snapshot.target.resourceId === resourceId
+    )
+    .map((snapshot) => ({
+      modelId: snapshot.target.modelId,
+      entries: snapshot.entries as ModelAlias[],
+    }));
+}
+
+/**
+ * Model ids kept visible locally after manual mapping pruning removes their
+ * final backend catalog entry.
+ */
+export function loadMappingDisabledCatalogModelIdsSafe(
+  apiBase: string | undefined,
+  resourceId: string | undefined
+): string[] {
+  if (!apiBase || !resourceId) return [];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  loadMappingDisabled(apiBase).forEach((entries) => {
+    entries.forEach((entry) => {
+      if (entry.target.source !== 'apiKey' || entry.target.resourceId !== resourceId) return;
+      const modelId = String(entry.target.modelId ?? '').trim();
+      const key = lower(modelId);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      ids.push(modelId);
+    });
+  });
+  return ids;
 }

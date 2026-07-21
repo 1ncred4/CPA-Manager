@@ -15,6 +15,7 @@ import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@
 import type { ModelInfo } from '@/utils/models';
 import {
   collectExactExcludedIds,
+  loadMappingDisabledCatalogModelIdsSafe,
   loadSuspendedCatalogSafe,
   modelsToFormEntriesWithAccess,
 } from '../../formModelAccess';
@@ -113,6 +114,7 @@ function buildInitialForm(
   if (brand === 'openaiCompatibility') {
     const cfg = raw as OpenAIProviderConfig;
     const suspendedCatalog = loadSuspendedCatalogSafe(apiBase, resource.id);
+    const catalogOnlyModelIds = loadMappingDisabledCatalogModelIdsSafe(apiBase, resource.id);
     return {
       apiKey: '',
       name: cfg.name ?? '',
@@ -126,6 +128,7 @@ function buildInitialForm(
         models: cfg.models,
         includeOpenAIFields: true,
         suspendedCatalog,
+        catalogOnlyModelIds,
       }),
       headers: cfg.headers
         ? Object.entries(cfg.headers).map(([k, v]) => ({ key: k, value: String(v) }))
@@ -146,6 +149,7 @@ function buildInitialForm(
   const cfg = raw as GeminiKeyConfig & ProviderKeyConfig;
   const disabled = hasDisableAllModelsRule(cfg.excludedModels);
   const exactExcludedIds = collectExactExcludedIds(cfg.excludedModels);
+  const catalogOnlyModelIds = loadMappingDisabledCatalogModelIdsSafe(apiBase, resource.id);
   return {
     // Keep the API key blank in edit mode. Pre-filling the real key makes this
     // password field a browser-autofill target (the saved management key can
@@ -162,6 +166,7 @@ function buildInitialForm(
     models: modelsToFormEntriesWithAccess({
       models: cfg.models,
       exactExcludedIds,
+      catalogOnlyModelIds,
     }),
     headers: cfg.headers
       ? Object.entries(cfg.headers).map(([k, v]) => ({ key: k, value: String(v) }))
@@ -433,9 +438,14 @@ export function BaseProviderForm({
           : null;
 
   const updateModelEntry = (idx: number, patch: Partial<ModelEntryInput>) => {
+    const current = modelsList[idx];
+    const nextPatch =
+      current && 'name' in patch && patch.name !== current.name
+        ? { ...patch, backendOmitted: false }
+        : patch;
     updateField(
       'models',
-      modelsList.map((it, i) => (i === idx ? { ...it, ...patch } : it))
+      modelsList.map((it, i) => (i === idx ? { ...it, ...nextPatch } : it))
     );
   };
 

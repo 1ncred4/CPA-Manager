@@ -180,14 +180,30 @@ function buildAccessState(
         )
         .map((snapshot) => lower(snapshot.target.modelId))
     );
+    const mappingDisabledIds = new Set(
+      Array.from(mirrors.mappingDisabled.values())
+        .flat()
+        .filter(
+          (entry) => entry.target.source === 'apiKey' && entry.target.resourceId === resource.id
+        )
+        .map((entry) => String(entry.target.modelId ?? '').trim())
+        .filter(
+          (modelId) => modelId && !resource.models.some((model) => lower(model) === lower(modelId))
+        )
+    );
+    const displayModels = mappingDisabledIds.size
+      ? [...resource.models, ...mappingDisabledIds]
+      : resource.models;
     rows.push(
       ...buildApiKeyAccessRows({
         resource: disabledIds.size
           ? {
               ...resource,
-              models: resource.models.filter((model) => !disabledIds.has(lower(model))),
+              models: displayModels.filter((model) => !disabledIds.has(lower(model))),
             }
-          : resource,
+          : mappingDisabledIds.size
+            ? { ...resource, models: displayModels }
+            : resource,
         providerLabel: ctx.apiKeyProviderLabel(resource.id, resource.brand),
         iconSrc: ctx.apiKeyIcon(resource.id, resource.brand),
         suspendedCatalogModelIds: suspendedByResource.get(resource.id) ?? [],

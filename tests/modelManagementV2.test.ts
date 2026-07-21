@@ -137,4 +137,31 @@ describe('model-management v2 projection', () => {
     );
     expect(mapped.mapping.byAliasKey.get('fast')?.targets[0].disabledReason).toBe('model');
   });
+
+  test('keeps mapping-disabled API models visible as globally enabled access rows', () => {
+    const ref = {
+      source: 'apiKey' as const,
+      resourceId: 'claude:0',
+      brand: 'claude' as const,
+      modelId: 'MiniMax-M3',
+    };
+    const mirrors = emptyMirrors();
+    mirrors.mappingDisabled.set('apiKey:claude:0:minimax-m3', [{ alias: 'chat', target: ref }]);
+
+    const state = buildStateFromSources(
+      {
+        oauthModels: {},
+        oauthAliasMap: {},
+        oauthExcludedMap: {},
+        resources: [apiResource('claude:0', [])],
+      },
+      mirrors,
+      ctx
+    );
+
+    expect(state.access.byKey.get('apiKey:claude:0:minimax-m3')).toMatchObject({
+      modelId: 'MiniMax-M3',
+      enabled: true,
+    });
+  });
 });

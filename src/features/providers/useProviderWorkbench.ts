@@ -111,6 +111,7 @@ const buildModelAliases = (
   }> = [];
   const catalogIndex = new Map<string, number>();
   (models ?? []).forEach((m) => {
+    if (m.backendOmitted === true) return;
     const name = m.name.trim();
     if (!name) return;
     const key = lower(name);
@@ -297,6 +298,7 @@ function buildOpenAIModelsForSave(input: {
   (input.form.models ?? []).forEach((formEntry) => {
     const name = formEntry.name.trim();
     if (!name) return;
+    if (formEntry.backendOmitted === true) return;
     const key = lowerModel(name);
     const targetKey = accessEnabledKey({ source: 'apiKey', resourceId: input.resourceId, brand: 'openaiCompatibility', modelId: name });
     const snapshot = snapshots.get(targetKey);
