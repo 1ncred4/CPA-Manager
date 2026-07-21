@@ -604,6 +604,8 @@ export function planAliasSave(input: {
   // API Key identity + main
   const identityOpenAiTouched = new Set<string>();
   const apiDisable = groupApiKeyByResource(toDisable);
+  const apiEnableIdentity = groupApiKeyByResource(toEnable);
+  const apiEnableClear = groupApiKeyByResource(toClearExclude);
   const apiEnable = groupApiKeyByResource([...toEnable, ...toClearExclude]);
   new Set([...apiDisable.keys(), ...apiEnable.keys()]).forEach((rid) => {
     const resource = state.catalogs.resources.find((r) => r.id === rid);
@@ -634,20 +636,33 @@ export function planAliasSave(input: {
         dirty = true;
         excluded += 1;
       });
-      enableIds.forEach((modelId) => {
-        const suspendedEntries = state.access.byKey.get(
-          accessEnabledKey({ source: 'apiKey', resourceId: rid, brand: resource.brand, modelId })
-        )?.suspendedCatalogEntries;
+      const accessKey = (modelId: string) =>
+        accessEnabledKey({ source: 'apiKey', resourceId: rid, brand: resource.brand, modelId });
+      // identity 重新启用：恢复挂起的原名条目（重新暴露原名）
+      const identityIds = new Set((apiEnableIdentity.get(rid) ?? []).map((id) => lower(id)));
+      (apiEnableIdentity.get(rid) ?? []).forEach((modelId) => {
+        const suspendedEntries = state.access.byKey.get(accessKey(modelId))?.suspendedCatalogEntries;
         const toRestore =
           suspendedEntries && suspendedEntries.length
             ? suspendedEntries
             : ([{ name: modelId }] as ModelAlias[]);
         const { next } = restoreModelToCatalog(models, toRestore);
         models = next;
-        managedUnmark.push(
-          accessEnabledKey({ source: 'apiKey', resourceId: rid, brand: resource.brand, modelId })
-        );
+        managedUnmark.push(accessKey(modelId));
         dirty = true;
+        push({
+          kind: 'catalogSuspendTake',
+          phase: 'after-backend',
+          queueKey: rid,
+          resourceId: rid,
+          modelId,
+        });
+      });
+      // 跨名/abandoned：catalog 已由 main-save 写入手动 alias；仅清受管 exclude + 挂起存储。
+      // 不恢复旧条目，否则会回填原名/旧别名，导致「自动渠道不显示但原名仍出现在模型列表」。
+      (apiEnableClear.get(rid) ?? []).forEach((modelId) => {
+        if (identityIds.has(lower(modelId))) return; // 已在 identity 恢复路径处理
+        managedUnmark.push(accessKey(modelId));
         push({
           kind: 'catalogSuspendTake',
           phase: 'after-backend',

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { planAccessToggle, type ModelOp } from '../src/features/models/modelOps';
+import { planAccessToggle, planAliasSave, type AliasDraft, type ModelOp } from '../src/features/models/modelOps';
 import type {
   ModelAccessEntry,
   ModelManagementState,
@@ -319,5 +319,58 @@ describe('planAccessToggle', () => {
     expect(beforeBackend).toContain('managedExcludeUnmark');
     expect(backend.length).toBeGreaterThan(0);
     void phaseOf;
+  });
+});
+
+describe('planAliasSave', () => {
+  test('OpenAI: add enabled (bare) model to a cross-name manual mapping -> only alias entry, no bare re-added', () => {
+    const resource = mkResource('res', 'openaiCompatibility', {
+      models: [{ name: 'gpt-4o' }], // bare entry, model enabled under original name
+    });
+    const state = mkState({ resources: [resource] });
+    const draft: AliasDraft = {
+      alias: 'my-gpt',
+      previousAliasKey: null,
+      baselineAlias: '',
+      isEditing: false,
+      selectedTargets: [mkApiKeyRef('res', 'openaiCompatibility', 'gpt-4o')],
+      suspendedTargets: [],
+    };
+    const { ops } = planAliasSave({ state, draft });
+
+    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
+    expect(modelPuts).toHaveLength(1);
+    if (modelPuts[0].kind === 'apiKeyModelsPut') {
+      // alias entry only; the bare {name: 'gpt-4o'} must NOT be re-added alongside it
+      expect(modelPuts[0].models).toEqual([{ name: 'gpt-4o', alias: 'my-gpt' }]);
+    }
+    // model was not channel-disabled -> no catalog suspend merge
+    expect(opsOfKind(ops, 'catalogSuspendMerge')).toHaveLength(0);
+  });
+
+  test('OpenAI: identity re-enable restores suspended bare entry (original name re-exposed)', () => {
+    const resource = mkResource('res', 'openaiCompatibility', {
+      models: [], // gpt-4o removed when channel-disabled; bare entry stashed
+    });
+    const state = mkState({
+      resources: [resource],
+      accessEntries: [accessEntryWithCatalog('apiKey:res:gpt-4o', [{ name: 'gpt-4o' }])],
+    });
+    const draft: AliasDraft = {
+      alias: 'gpt-4o', // identity mapping (alias === modelId)
+      previousAliasKey: null,
+      baselineAlias: '',
+      isEditing: false,
+      selectedTargets: [mkApiKeyRef('res', 'openaiCompatibility', 'gpt-4o')],
+      suspendedTargets: [],
+    };
+    const { ops } = planAliasSave({ state, draft });
+
+    const modelPuts = opsOfKind(ops, 'apiKeyModelsPut');
+    expect(modelPuts).toHaveLength(1);
+    if (modelPuts[0].kind === 'apiKeyModelsPut') {
+      // bare entry restored -> original name re-exposed
+      expect(modelPuts[0].models).toEqual([{ name: 'gpt-4o' }]);
+    }
   });
 });
