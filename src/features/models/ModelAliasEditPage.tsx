@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
@@ -64,6 +64,7 @@ export function ModelAliasEditPage() {
   const [baselineSignature, setBaselineSignature] = useState('');
   const [pickerSearch, setPickerSearch] = useState('');
   const [saving, setSaving] = useState(false);
+  const initializedDraftKeyRef = useRef<string | null>(null);
 
   const allTargets = useMemo(() => row?.targets ?? [], [row]);
   const targetsByKey = useMemo(() => new Map(allTargets.map((target) => [mappingTargetKey(target), target])), [allTargets]);
@@ -76,8 +77,14 @@ export function ModelAliasEditPage() {
     return target ? targetRefFromModelTarget(target) : null;
   }, [optionByKey, targetsByKey]);
 
+  const draftInitializationKey = `${isEditing ? 'edit' : 'create'}:${toAliasKey(aliasParam)}:${preselect}`;
+
   useEffect(() => {
-    if (!ctx) return;
+    if (!ctx || accessList.loading || initializedDraftKeyRef.current === draftInitializationKey) return;
+    // Wait for the mapping snapshot before initializing an edit draft. A
+    // background load must not replace a draft that the user has already
+    // started editing.
+    if (isEditing && !row) return;
     if (row) {
       const nextDisabled = row.targets
         .filter((target) => target.suspended && target.disabledReason === 'mapping' && !isIdentityMappingTarget(row.alias, target))
@@ -91,7 +98,15 @@ export function ModelAliasEditPage() {
       setBaselineAlias(row.alias);
       setSelectedKeys(nextSelected);
       setDisabledTargets(nextDisabled);
-      setBaselineSignature(getMappingDraftSignature(row.alias, Array.from(nextSelected).map((key) => resolveRef(key)).filter((value): value is MappingTargetRef => Boolean(value))));
+      setBaselineSignature(
+        getMappingDraftSignature(
+          row.alias,
+          row.targets
+            .filter((target) => !nextDisabled.some((entry) => mappingTargetKey(entry.target) === mappingTargetKey(target)))
+            .map(targetRefFromModelTarget)
+        )
+      );
+      initializedDraftKeyRef.current = draftInitializationKey;
       return;
     }
     setAlias('');
@@ -101,7 +116,8 @@ export function ModelAliasEditPage() {
     if (preselect && enabledOptions.some((option) => mappingTargetKey(option) === preselect)) next.add(preselect);
     setSelectedKeys(next);
     setBaselineSignature(getMappingDraftSignature('', []));
-  }, [ctx, enabledOptions, preselect, resolveRef, row]);
+    initializedDraftKeyRef.current = draftInitializationKey;
+  }, [accessList.loading, ctx, draftInitializationKey, enabledOptions, isEditing, preselect, row]);
 
   const selectedTargets = useMemo(
     () => Array.from(selectedKeys).map(resolveRef).filter((value): value is MappingTargetRef => Boolean(value)),

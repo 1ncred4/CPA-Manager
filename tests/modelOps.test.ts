@@ -145,6 +145,53 @@ describe('v2 model access planner', () => {
     expect(restoreOps.some((op) => op.kind === 'mappingDisabledTake')).toBe(true);
   });
 
+  test('mapping save keeps multiple disabled targets from the same provider family', () => {
+    const first = apiRef('gemini:0', 'gemini', 'first');
+    const second = apiRef('gemini:1', 'gemini', 'second');
+    const mapping = {
+      byAliasKey: new Map([
+        [
+          'chat',
+          {
+            alias: 'chat',
+            aliasKey: 'chat',
+            targets: [
+              { ...first, displayName: 'first', providerLabel: 'Gemini', iconSrc: null, suspended: false },
+              { ...second, displayName: 'second', providerLabel: 'Gemini', iconSrc: null, suspended: false },
+            ],
+          },
+        ],
+      ]),
+    };
+    const ops = planAliasSave({
+      state: state({
+        resources: [
+          resource('gemini:0', 'gemini', { models: [{ name: 'first', alias: 'chat' }] }),
+          resource('gemini:1', 'gemini', { models: [{ name: 'second', alias: 'chat' }] }),
+        ],
+        mapping,
+      }),
+      draft: {
+        alias: 'chat',
+        previousAliasKey: 'chat',
+        baselineAlias: 'chat',
+        isEditing: true,
+        selectedTargets: [],
+        disabledTargets: [
+          { alias: 'chat', target: first },
+          { alias: 'chat', target: second },
+        ],
+      },
+    }).ops;
+
+    const disabledOps = ops.filter((op) => op.kind === 'mappingDisabledMerge');
+    expect(disabledOps).toHaveLength(2);
+    expect(disabledOps.map((op) => op.targetKey).sort()).toEqual([
+      'apiKey:gemini:0:first',
+      'apiKey:gemini:1:second',
+    ]);
+  });
+
   test('editing a disabled model updates its snapshot instead of backend models', () => {
     const ref = apiRef('openai:0', 'openaiCompatibility', 'gpt-4o');
     const snapshot = { target: ref, entries: [{ name: 'gpt-4o', alias: 'old' }] };

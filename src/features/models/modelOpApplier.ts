@@ -2,11 +2,12 @@
  * 应用器：执行 modelOps 产出的 ModelOp[]。
  *
  * 语义：
- * - 按 queueKey（channel / resourceId）分组：同 key 串行（复刻今日 enqueueSerial），不同 key 并发。
- * - 同 key 内按 phase 排序：before-backend（同步 localStorage）-> backend（await API）-> after-backend（同步 localStorage）。
+ * - 同一 API 基址下的整批操作串行执行。提供商更新使用「先读整份配置，再写回列表」的流程，
+ *   仅按 channel / resourceId 并行会让同一轮保存中的多个写回互相覆盖。
+ * - 按 phase 排序：before-backend（同步 localStorage）-> backend（await API）-> after-backend（同步 localStorage）。
  *   同 phase 内保持 plan 时的 push 顺序（稳定排序）。
  * - 任一 op 失败 -> 记录 failure，跳过该 queueKey 的剩余 op；调用方据 failures 触发全量 baseline 重新同步。
- * - 跨调用的串行队列：传入的 queues Map 为模块级单例（store 持有），保证先后两次 apply 间同 key 仍串行。
+ * - 跨调用的串行队列：传入的 queues Map 为模块级单例（store 持有），保证同一 API 基址的先后两次 apply 仍串行。
  *
  * 无完整事务回滚（后端不支持）。before-backend 的 suspend 写入若成功但后续 backend 失败：
  * - 禁用场景：绑定已捕获（安全，恢复时可用）；resync 的 reconcile 会清理因失败留下的 ghost。
@@ -56,7 +57,13 @@ export async function applyModelOperations(
   input: ApplyModelOperationsInput
 ): Promise<ApplyModelOperationsResult> {
   const queues = input.queues ?? new Map<string, Promise<unknown>>();
-  const byQueue = groupByQueueKey(input.ops);
+  if (!input.ops.length) return { failures: [] };
+
+  // A single save may touch several resources/channels, but the management API
+  // updates provider lists through read-modify-write requests. Keep the whole
+  // batch together so a later PUT cannot overwrite an earlier PUT from the
+  // same save (or from another concurrent model-management action).
+  const byQueue = new Map([[`model-management:${input.apiBase}`, input.ops]]);
   const failures: ModelOpFailure[] = [];
 
   const tasks = Array.from(byQueue.entries()).map(([queueKey, ops]) => {
@@ -71,16 +78,6 @@ export async function applyModelOperations(
 
   await Promise.all(tasks);
   return { failures };
-}
-
-function groupByQueueKey(ops: ModelOp[]): Map<string, ModelOp[]> {
-  const map = new Map<string, ModelOp[]>();
-  ops.forEach((op) => {
-    const list = map.get(op.queueKey) ?? [];
-    list.push(op);
-    map.set(op.queueKey, list);
-  });
-  return map;
 }
 
 async function runQueue(
