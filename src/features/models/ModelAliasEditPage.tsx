@@ -60,6 +60,7 @@ export function ModelAliasEditPage() {
   const [alias, setAlias] = useState(row?.alias ?? aliasParam);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [disabledTargets, setDisabledTargets] = useState<DisabledMapping[]>([]);
+  const [removedTargets, setRemovedTargets] = useState<MappingTargetRef[]>([]);
   const [baselineAlias, setBaselineAlias] = useState(row?.alias ?? aliasParam);
   const [baselineSignature, setBaselineSignature] = useState('');
   const [pickerSearch, setPickerSearch] = useState('');
@@ -98,6 +99,7 @@ export function ModelAliasEditPage() {
       setBaselineAlias(row.alias);
       setSelectedKeys(nextSelected);
       setDisabledTargets(nextDisabled);
+      setRemovedTargets([]);
       setBaselineSignature(
         getMappingDraftSignature(
           row.alias,
@@ -112,6 +114,7 @@ export function ModelAliasEditPage() {
     setAlias('');
     setBaselineAlias('');
     setDisabledTargets([]);
+    setRemovedTargets([]);
     const next = new Set<string>();
     if (preselect && enabledOptions.some((option) => mappingTargetKey(option) === preselect)) next.add(preselect);
     setSelectedKeys(next);
@@ -125,7 +128,7 @@ export function ModelAliasEditPage() {
   );
   const selectedSignature = getMappingDraftSignature(alias, selectedTargets);
   const disabledSignature = JSON.stringify(disabledTargets.map((entry) => `${toAliasKey(entry.alias)}|${mappingTargetKey(entry.target)}`).sort());
-  const isDirty = baselineSignature !== selectedSignature || (isEditing && disabledTargets.length > 0 && disabledSignature !== JSON.stringify((row?.targets ?? []).filter((target) => target.suspended && target.disabledReason === 'mapping').map((target) => `${toAliasKey(row?.alias ?? '')}|${mappingTargetKey(target)}`).sort()));
+  const isDirty = baselineSignature !== selectedSignature || removedTargets.length > 0 || (isEditing && disabledTargets.length > 0 && disabledSignature !== JSON.stringify((row?.targets ?? []).filter((target) => target.suspended && target.disabledReason === 'mapping').map((target) => `${toAliasKey(row?.alias ?? '')}|${mappingTargetKey(target)}`).sort()));
   const guard = useUnsavedChangesGuard({
     shouldBlock: isDirty,
     dialog: {
@@ -165,7 +168,10 @@ export function ModelAliasEditPage() {
       if (checked) next.add(key); else next.delete(key);
       return next;
     });
-    if (checked) setDisabledTargets((current) => current.filter((entry) => mappingTargetKey(entry.target) !== key));
+    if (checked) {
+      setDisabledTargets((current) => current.filter((entry) => mappingTargetKey(entry.target) !== key));
+      setRemovedTargets((current) => current.filter((target) => mappingTargetKey(target) !== key));
+    }
   };
 
   const setChannelTargetEnabled = (key: string, enabled: boolean) => {
@@ -174,6 +180,7 @@ export function ModelAliasEditPage() {
     if (enabled) {
       setDisabledTargets((current) => current.filter((entry) => mappingTargetKey(entry.target) !== key));
       setSelectedKeys((current) => new Set(current).add(key));
+      setRemovedTargets((current) => current.filter((target) => mappingTargetKey(target) !== key));
     } else {
       setSelectedKeys((current) => { const next = new Set(current); next.delete(key); return next; });
       setDisabledTargets((current) => current.some((entry) => mappingTargetKey(entry.target) === key) ? current : [...current, { alias: alias.trim() || baselineAlias, target: ref }]);
@@ -181,8 +188,11 @@ export function ModelAliasEditPage() {
   };
 
   const removeTarget = (key: string) => {
+    const ref = resolveRef(key);
+    if (!ref) return;
     setSelectedKeys((current) => { const next = new Set(current); next.delete(key); return next; });
     setDisabledTargets((current) => current.filter((entry) => mappingTargetKey(entry.target) !== key));
+    setRemovedTargets((current) => current.some((target) => mappingTargetKey(target) === key) ? current : [...current, ref]);
   };
 
   const validationError = validateMappingSelection({
@@ -221,6 +231,7 @@ export function ModelAliasEditPage() {
       isEditing,
       selectedTargets,
       disabledTargets,
+      removedTargets,
     };
     setSaving(true);
     const result = await saveAlias(draft);

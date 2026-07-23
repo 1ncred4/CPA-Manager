@@ -424,6 +424,8 @@ export type AliasDraft = {
   selectedTargets: MappingTargetRef[];
   /** Exact non-identity bindings that should remain locally disabled. */
   disabledTargets: DisabledMapping[];
+  /** Targets removed with the tag delete action, rather than channel-disabled. */
+  removedTargets?: MappingTargetRef[];
   /** Kept as an input compatibility alias for older callers during rollout. */
   suspendedTargets?: DisabledMapping[];
 };
@@ -540,12 +542,14 @@ export function planAliasSave(input: { state: ModelManagementState; draft: Alias
   const baselineTargets = baselineAliasKey ? allTargetsForAlias(state, baselineAliasKey) : [];
   const selectedTargets = draft.selectedTargets.map(stripTarget);
   const disabledTargets = draft.disabledTargets ?? draft.suspendedTargets ?? [];
+  const removedTargets = (draft.removedTargets ?? []).map(stripTarget);
   const disabledKeys = new Set(disabledTargets.map((entry) => mappingTargetKey(entry.target)));
   const selectedKeys = new Set(selectedTargets.map(mappingTargetKey));
+  const removedKeys = new Set(removedTargets.map(mappingTargetKey));
   const ops: ModelOp[] = [];
 
   const allAffected = new Map<string, MappingTargetRef>();
-  [...baselineTargets, ...selectedTargets, ...disabledTargets.map((entry) => entry.target)].forEach((target) => {
+  [...baselineTargets, ...selectedTargets, ...disabledTargets.map((entry) => entry.target), ...removedTargets].forEach((target) => {
     allAffected.set(mappingTargetKey(target), target);
   });
 
@@ -593,7 +597,7 @@ export function planAliasSave(input: { state: ModelManagementState; draft: Alias
   });
   baselineTargets.forEach((target) => {
     const targetKey = mappingTargetKey(target);
-    if (selectedKeys.has(targetKey) || target.source === 'oauth' && same(finalAlias, target.modelId)) return;
+    if (selectedKeys.has(targetKey) || removedKeys.has(targetKey) || target.source === 'oauth' && same(finalAlias, target.modelId)) return;
     if (target.source === 'oauth' && same(finalAlias, target.modelId)) return;
     if (disabledKeys.has(targetKey)) return;
     if (target.source === 'oauth' || target.source === 'apiKey') {

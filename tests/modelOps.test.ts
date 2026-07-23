@@ -190,6 +190,71 @@ describe('v2 model access planner', () => {
     expect(restoreOps.some((op) => op.kind === 'mappingDisabledTake')).toBe(true);
   });
 
+  test('tag removal removes the binding instead of creating a mapping-disabled record', () => {
+    const ref = apiRef('gemini:0', 'gemini', 'a');
+    const mapping = {
+      byAliasKey: new Map([
+        [
+          'chat',
+          {
+            alias: 'chat',
+            aliasKey: 'chat',
+            targets: [{ ...ref, displayName: 'a', providerLabel: 'Gemini', iconSrc: null, suspended: false }],
+          },
+        ],
+      ]),
+    };
+    const ops = planAliasSave({
+      state: state({
+        resources: [resource('gemini:0', 'gemini', { models: [{ name: 'a', alias: 'chat' }] })],
+        mapping,
+      }),
+      draft: {
+        alias: 'chat',
+        previousAliasKey: 'chat',
+        baselineAlias: 'chat',
+        isEditing: true,
+        selectedTargets: [],
+        disabledTargets: [],
+        removedTargets: [ref],
+      },
+    }).ops;
+
+    expect(ops.some((op) => op.kind === 'mappingDisabledMerge')).toBe(false);
+    expect(ops.some((op) => op.kind === 'apiKeyModelsPut' && op.models.length === 0)).toBe(true);
+  });
+
+  test('removing an already mapping-disabled tag clears its local disabled record', () => {
+    const ref = apiRef('gemini:0', 'gemini', 'a');
+    const mapping = {
+      byAliasKey: new Map([
+        [
+          'chat',
+          {
+            alias: 'chat',
+            aliasKey: 'chat',
+            targets: [{ ...ref, displayName: 'a', providerLabel: 'Gemini', iconSrc: null, suspended: true, disabledReason: 'mapping' as const }],
+          },
+        ],
+      ]),
+    };
+    const ops = planAliasSave({
+      state: state({ mapping }),
+      draft: {
+        alias: 'chat',
+        previousAliasKey: 'chat',
+        baselineAlias: 'chat',
+        isEditing: true,
+        selectedTargets: [],
+        disabledTargets: [],
+        removedTargets: [ref],
+      },
+    }).ops;
+
+    expect(ops.some((op) => op.kind === 'mappingDisabledMerge')).toBe(false);
+    expect(ops.some((op) => op.kind === 'mappingDisabledTake')).toBe(true);
+  });
+
   test('mapping save keeps multiple disabled targets from the same provider family', () => {
     const first = apiRef('gemini:0', 'gemini', 'first');
     const second = apiRef('gemini:1', 'gemini', 'second');
