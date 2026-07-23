@@ -14,10 +14,10 @@ import type { ProviderResource } from '@/features/providers/types';
 /**
  * Build the provider payload used when a model mapping removes entries.
  *
- * CLIProxyAPI treats an omitted/empty Claude `models` list as "use the full
- * static Claude catalog".  When the last Claude mapping is disabled, that
- * fallback would resurrect every default Claude model.  Persist the backend's
- * explicit all-model exclusion instead, while still omitting `models` itself.
+ * CLIProxyAPI treats an omitted/empty API Key `models` list as a provider
+ * fallback. When the last configured model is disabled, that fallback could
+ * resurrect the provider catalog. Persist an explicit all-model exclusion
+ * instead, while still omitting `models` itself.
  */
 export function buildApiKeyModelsUpdate(
   resource: ProviderResource,
@@ -25,24 +25,26 @@ export function buildApiKeyModelsUpdate(
 ): GeminiKeyConfig | ProviderKeyConfig {
   const current = resource.raw as GeminiKeyConfig | ProviderKeyConfig;
   const models = nextModels.length ? nextModels : undefined;
+  const existingExcluded = Array.isArray(current.excludedModels)
+    ? current.excludedModels.filter((rule) => String(rule ?? '').includes('*'))
+    : undefined;
 
-  if (resource.brand === 'claude' && !nextModels.length) {
+  if (!nextModels.length) {
     return {
       ...current,
       models,
-      excludedModels: withDisableAllModelsRule(current.excludedModels),
+      excludedModels: withDisableAllModelsRule(existingExcluded),
     };
   }
 
   if (
-    resource.brand === 'claude' &&
     !resource.disabled &&
-    hasDisableAllModelsRule(current.excludedModels)
+    hasDisableAllModelsRule(existingExcluded)
   ) {
     return {
       ...current,
       models,
-      excludedModels: withoutDisableAllModelsRule(current.excludedModels),
+      excludedModels: withoutDisableAllModelsRule(existingExcluded),
     };
   }
 

@@ -93,7 +93,7 @@ describe('modelAccessRows', () => {
     expect(findMatchingWildcardRule('gpt-5', ['gpt-*'])).toBe('gpt-*');
   });
 
-  test('builds api key rows per resource and respects exact excludes', () => {
+  test('builds api key rows from active models only', () => {
     const resource = makeResource({
       raw: {
         apiKey: 'sk-test',
@@ -113,11 +113,35 @@ describe('modelAccessRows', () => {
     expect(rows[0]).toMatchObject({
       key: 'apiKey:claude:0:sk-test:claude-opus-4-8',
       source: 'apiKey',
-      enabled: false,
+      enabled: true,
       supportsExclude: true,
       resourceId: 'claude:0:sk-test',
     });
     expect(rows[1].enabled).toBe(true);
+  });
+
+  test('shows suspended Gemini API Key models as disabled rows', () => {
+    const resource = makeResource({
+      id: 'gemini:0:sk-test',
+      brand: 'gemini',
+      models: ['other-model'],
+      raw: {
+        apiKey: 'sk-test',
+        models: [{ name: 'other-model', alias: 'other' }],
+      },
+    });
+
+    const rows = buildApiKeyAccessRows({
+      resource,
+      providerLabel: 'Gemini · sk-…test',
+      suspendedCatalogModelIds: ['gemma-4-31b-it'],
+    });
+
+    expect(rows.find((row) => row.modelId === 'gemma-4-31b-it')).toMatchObject({
+      enabled: false,
+      disableMode: 'catalog',
+      toggleDisabled: false,
+    });
   });
 
   test('disables toggles when api key entry is fully disabled via *', () => {

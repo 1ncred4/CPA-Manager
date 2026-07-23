@@ -1,17 +1,13 @@
 /**
  * 模型禁用 Tab 的扁平行：OAuth 定义 + API Key 配置 models
  *
- * OpenAI Compatibility 无 excludedModels：用 models[] 摘除 + catalog 挂起模拟按模型禁用。
+ * API Key 模型统一用 models[] 摘除 + catalog 挂起模拟按模型禁用。
  */
 
-import {
-  hasDisableAllModelsRule,
-  stripDisableAllModelsRule,
-} from '@/components/providers/utils';
+import { hasDisableAllModelsRule } from '@/components/providers/utils';
 import { hasOAuthExcludedRule } from '@/features/authFiles/oauthExcludedRules';
 import { isModelExcluded, normalizeProviderKey } from '@/features/authFiles/constants';
 import type { AuthFileModelItem } from '@/features/authFiles/constants';
-import type { GeminiKeyConfig, ProviderKeyConfig } from '@/types';
 import type { ProviderBrand, ProviderResource } from '@/features/providers/types';
 
 export type ModelAccessSource = 'oauth' | 'apiKey';
@@ -20,8 +16,7 @@ export type ModelAccessLockReason = 'wildcard' | 'entry-disabled' | 'unsupported
 
 /**
  * 禁用写回策略：
- * - exclude：写 excludedModels（大多数 API Key 品牌）
- * - catalog：从 models[] 移除并挂起（openaiCompatibility）
+ * - catalog：从 models[] 移除并挂起（所有 API Key 品牌）
  */
 export type ModelAccessDisableMode = 'exclude' | 'catalog';
 
@@ -57,7 +52,7 @@ export type BuildApiKeyRowsInput = {
   providerLabel: string;
   iconSrc?: string | null;
   /**
-   * OpenAI Compatibility：已被 catalog 挂起（从 models[] 摘掉）的模型 id 列表。
+   * 已被 catalog 挂起（从 models[] 摘掉）的模型 id 列表。
    * 会作为 enabled=false 的行展示，以便再次启用。
    */
   suspendedCatalogModelIds?: string[];
@@ -130,38 +125,24 @@ export function buildOAuthAccessRows(input: BuildOAuthRowsInput): ModelAccessRow
 
 export function buildApiKeyAccessRows(input: BuildApiKeyRowsInput): ModelAccessRow[] {
   const { resource, providerLabel, iconSrc, suspendedCatalogModelIds = [] } = input;
-  const usesCatalogDisable = resource.brand === 'openaiCompatibility';
   const supportsExclude = true;
-  const disableMode: ModelAccessDisableMode = usesCatalogDisable ? 'catalog' : 'exclude';
+  const disableMode: ModelAccessDisableMode = 'catalog';
   const models = resource.models ?? [];
   const entryDisabled = resource.disabled === true;
-
-  const raw = resource.raw as GeminiKeyConfig | ProviderKeyConfig | { excludedModels?: string[] };
-  const excludedModels = usesCatalogDisable
-    ? []
-    : stripDisableAllModelsRule(
-        Array.isArray((raw as { excludedModels?: string[] }).excludedModels)
-          ? (raw as { excludedModels?: string[] }).excludedModels
-          : []
-      );
 
   const activeIds = models.map((name) => String(name ?? '').trim()).filter(Boolean);
   const activeKeySet = new Set(activeIds.map(getRuleKey));
 
   // Catalog-suspended models that are no longer in models[] still need a row to re-enable.
-  const suspendedIds = usesCatalogDisable
-    ? suspendedCatalogModelIds
-        .map((id) => String(id ?? '').trim())
-        .filter((id) => id && !activeKeySet.has(getRuleKey(id)))
-    : [];
+  const suspendedIds = suspendedCatalogModelIds
+    .map((id) => String(id ?? '').trim())
+    .filter((id) => id && !activeKeySet.has(getRuleKey(id)));
 
   if (activeIds.length === 0 && suspendedIds.length === 0) return [];
 
   const rows: ModelAccessRow[] = [];
 
   activeIds.forEach((modelId) => {
-    const exactExcluded = usesCatalogDisable ? false : isExactExcluded(modelId, excludedModels);
-
     let enabled: boolean;
     let toggleDisabled: boolean;
     let lockReason: ModelAccessLockReason;
@@ -171,7 +152,7 @@ export function buildApiKeyAccessRows(input: BuildApiKeyRowsInput): ModelAccessR
       toggleDisabled = true;
       lockReason = 'entry-disabled';
     } else {
-      enabled = !exactExcluded;
+      enabled = true;
       toggleDisabled = false;
       lockReason = null;
     }

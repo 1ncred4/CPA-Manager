@@ -31,8 +31,6 @@ import {
 } from './adapters';
 import { PROVIDER_BRAND_ORDER } from './descriptors';
 import {
-  collectDisabledModelIds,
-  mergeFormExcludedModels,
   filterEnabledCatalogNames,
 } from './formModelAccess';
 import type {
@@ -213,19 +211,25 @@ const buildProviderKeyConfig = (
   brand: 'gemini' | 'codex' | 'xai' | 'claude' | 'vertex',
   input: ProviderEntryFormInput,
   existing?: ProviderKeyConfig | GeminiKeyConfig | null,
-  options?: { preserveBackendOmittedAllModelsRule?: boolean }
+  options?: {
+    preserveBackendOmittedAllModelsRule?: boolean;
+    preserveEmptyModelsAllModelsRule?: boolean;
+    modelsOverride?: ModelAlias[];
+  }
 ): ProviderKeyConfig | GeminiKeyConfig => {
   const headers = headersFromEntries(input.headers);
-  // Exclude brands keep disabled models in models[]; exact excludes go to excludedModels.
-  const models = buildModelAliases(input.models, false, existing?.models);
+  const models = options?.modelsOverride ?? buildModelAliases(input.models, false, existing?.models);
   const hasBackendOmittedModels = input.models.some((model) => model.backendOmitted === true);
   const preserveBackendOmittedAllModelsRule =
     options?.preserveBackendOmittedAllModelsRule === true && hasBackendOmittedModels;
-  const excluded = mergeFormExcludedModels({
-    existingExcluded: existing?.excludedModels,
-    entryDisabled: input.disabled || preserveBackendOmittedAllModelsRule,
-    formDisabledModelIds: collectDisabledModelIds(input.models),
-  });
+  const preserveEmptyModelsAllModelsRule =
+    options?.preserveEmptyModelsAllModelsRule === true && models.length === 0;
+  const existingExcluded = (existing?.excludedModels ?? []).filter((rule) =>
+    String(rule ?? '').includes('*')
+  );
+  const excluded = input.disabled || preserveBackendOmittedAllModelsRule || preserveEmptyModelsAllModelsRule
+    ? [...existingExcluded.filter((rule) => rule !== '*'), '*']
+    : existingExcluded.filter((rule) => rule !== '*');
   const apiKeyChanged = input.apiKey.trim().length > 0;
   const next: ProviderKeyConfig = {
     apiKey: apiKeyChanged ? input.apiKey.trim() : (existing?.apiKey ?? ''),
@@ -294,6 +298,96 @@ const buildOpenAIConfig = (
 };
 
 const lowerModel = (value: string): string => value.trim().toLowerCase();
+
+type ApiKeyModelSavePlan = {
+  models: ModelAlias[];
+  snapshotsToPut: Array<{
+    target: {
+      source: 'apiKey';
+      resourceId: string;
+      brand: Exclude<ProviderBrand, 'openaiCompatibility'>;
+      modelId: string;
+    };
+    entries: ModelAlias[];
+  }>;
+  snapshotsToTake: Array<{
+    source: 'apiKey';
+    resourceId: string;
+    brand: Exclude<ProviderBrand, 'openaiCompatibility'>;
+    modelId: string;
+  }>;
+};
+
+/** Build API Key models[] while preserving disabled model aliases in snapshots. */
+function buildApiKeyModelsForSave(input: {
+  apiBase: string;
+  resourceId: string;
+  brand: Exclude<ProviderBrand, 'openaiCompatibility'>;
+  form: ProviderEntryFormInput;
+  existingModels?: ModelAlias[] | null;
+}): ApiKeyModelSavePlan {
+  const existing = input.existingModels ?? [];
+  const snapshots = loadModelDisabledSnapshots(input.apiBase);
+  const byName = new Map<string, ModelAlias[]>();
+  existing.forEach((entry) => {
+    const name = String(entry.name ?? '').trim();
+    if (!name) return;
+    const normalized = {
+      ...entry,
+      name,
+      alias: String(entry.alias ?? name).trim() || name,
+    };
+    const list = byName.get(lowerModel(name)) ?? [];
+    list.push(normalized);
+    byName.set(lowerModel(name), list);
+  });
+
+  const result: ModelAlias[] = [];
+  const snapshotsToPut: ApiKeyModelSavePlan['snapshotsToPut'] = [];
+  const snapshotsToTake: ApiKeyModelSavePlan['snapshotsToTake'] = [];
+  const seen = new Set<string>();
+
+  (input.form.models ?? []).forEach((formEntry) => {
+    const name = String(formEntry.name ?? '').trim();
+    if (!name || formEntry.backendOmitted === true) return;
+    const key = lowerModel(name);
+    const target = {
+      source: 'apiKey' as const,
+      resourceId: input.resourceId,
+      brand: input.brand,
+      modelId: name,
+    };
+    const targetKey = accessEnabledKey(target);
+    const snapshot = snapshots.get(targetKey);
+    const entries = snapshot?.entries?.length
+      ? (snapshot.entries as ModelAlias[])
+      : byName.get(key)?.length
+        ? byName.get(key)!
+        : [{ name, alias: name }];
+
+    if (formEntry.enabled === false) {
+      if (!snapshot || JSON.stringify(snapshot.entries) !== JSON.stringify(entries)) {
+        snapshotsToPut.push({ target, entries: entries.map((entry) => ({ ...entry })) });
+      }
+      return;
+    }
+
+    entries.forEach((entry) => {
+      const normalized = {
+        ...entry,
+        name,
+        alias: String(entry.alias ?? name).trim() || name,
+      };
+      const entryKey = `${lowerModel(normalized.name)}|${lowerModel(normalized.alias)}`;
+      if (seen.has(entryKey)) return;
+      seen.add(entryKey);
+      result.push(normalized);
+    });
+    if (snapshot) snapshotsToTake.push(target);
+  });
+
+  return { models: result, snapshotsToPut, snapshotsToTake };
+}
 
 type OpenAIModelSavePlan = {
   models: ModelAlias[];
@@ -498,50 +592,106 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
         const brand = resource.brand;
         const selector = resource.selector;
         const apiBase = useAuthStore.getState().apiBase;
+        let apiKeyModelPlan: ApiKeyModelSavePlan | null = null;
         let openaiModelPlan: OpenAIModelSavePlan | null = null;
         if (brand === 'gemini' && selector.brand === 'gemini') {
           const existing = resource.raw as GeminiKeyConfig;
+          apiKeyModelPlan = apiBase
+            ? buildApiKeyModelsForSave({
+                apiBase,
+                resourceId: resource.id,
+                brand: 'gemini',
+                form: input,
+                existingModels: existing.models,
+              })
+            : null;
           await providersApi.updateGeminiKey(
             selector.apiKey,
             selector.baseUrl,
             buildProviderKeyConfig('gemini', input, existing, {
               preserveBackendOmittedAllModelsRule: !resource.disabled,
+              preserveEmptyModelsAllModelsRule: apiKeyModelPlan !== null && apiKeyModelPlan.models.length === 0,
+              modelsOverride: apiKeyModelPlan?.models,
             }) as GeminiKeyConfig
           );
         } else if (brand === 'codex' && selector.brand === 'codex') {
           const existing = resource.raw as ProviderKeyConfig;
+          apiKeyModelPlan = apiBase
+            ? buildApiKeyModelsForSave({
+                apiBase,
+                resourceId: resource.id,
+                brand: 'codex',
+                form: input,
+                existingModels: existing.models,
+              })
+            : null;
           await providersApi.updateCodexConfig(
             selector.apiKey,
             selector.baseUrl,
             buildProviderKeyConfig('codex', input, existing, {
               preserveBackendOmittedAllModelsRule: !resource.disabled,
+              preserveEmptyModelsAllModelsRule: apiKeyModelPlan !== null && apiKeyModelPlan.models.length === 0,
+              modelsOverride: apiKeyModelPlan?.models,
             }) as ProviderKeyConfig
           );
         } else if (brand === 'xai' && selector.brand === 'xai') {
           const existing = resource.raw as ProviderKeyConfig;
+          apiKeyModelPlan = apiBase
+            ? buildApiKeyModelsForSave({
+                apiBase,
+                resourceId: resource.id,
+                brand: 'xai',
+                form: input,
+                existingModels: existing.models,
+              })
+            : null;
           await providersApi.updateXAIConfig(
             selector.apiKey,
             selector.baseUrl,
             buildProviderKeyConfig('xai', input, existing, {
               preserveBackendOmittedAllModelsRule: !resource.disabled,
+              preserveEmptyModelsAllModelsRule: apiKeyModelPlan !== null && apiKeyModelPlan.models.length === 0,
+              modelsOverride: apiKeyModelPlan?.models,
             }) as ProviderKeyConfig
           );
         } else if (brand === 'claude' && selector.brand === 'claude') {
           const existing = resource.raw as ProviderKeyConfig;
+          apiKeyModelPlan = apiBase
+            ? buildApiKeyModelsForSave({
+                apiBase,
+                resourceId: resource.id,
+                brand: 'claude',
+                form: input,
+                existingModels: existing.models,
+              })
+            : null;
           await providersApi.updateClaudeConfig(
             selector.apiKey,
             selector.baseUrl,
             buildProviderKeyConfig('claude', input, existing, {
               preserveBackendOmittedAllModelsRule: !resource.disabled,
+              preserveEmptyModelsAllModelsRule: apiKeyModelPlan !== null && apiKeyModelPlan.models.length === 0,
+              modelsOverride: apiKeyModelPlan?.models,
             }) as ProviderKeyConfig
           );
         } else if (brand === 'vertex' && selector.brand === 'vertex') {
           const existing = resource.raw as ProviderKeyConfig;
+          apiKeyModelPlan = apiBase
+            ? buildApiKeyModelsForSave({
+                apiBase,
+                resourceId: resource.id,
+                brand: 'vertex',
+                form: input,
+                existingModels: existing.models,
+              })
+            : null;
           await providersApi.updateVertexConfig(
             selector.apiKey,
             selector.baseUrl,
             buildProviderKeyConfig('vertex', input, existing, {
               preserveBackendOmittedAllModelsRule: !resource.disabled,
+              preserveEmptyModelsAllModelsRule: apiKeyModelPlan !== null && apiKeyModelPlan.models.length === 0,
+              modelsOverride: apiKeyModelPlan?.models,
             }) as ProviderKeyConfig
           );
         } else if (brand === 'openaiCompatibility' && selector.brand === 'openaiCompatibility') {
@@ -567,6 +717,10 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
           clearProviderManualDisabled(apiBase, resource.id);
         }
 
+        if (apiKeyModelPlan && apiBase) {
+          apiKeyModelPlan.snapshotsToPut.forEach((snapshot) => putModelDisabledSnapshot(apiBase, snapshot));
+          apiKeyModelPlan.snapshotsToTake.forEach((target) => takeModelDisabledSnapshot(apiBase, target));
+        }
         if (openaiModelPlan && apiBase) {
           openaiModelPlan.snapshotsToPut.forEach((snapshot) => putModelDisabledSnapshot(apiBase, snapshot));
           openaiModelPlan.snapshotsToTake.forEach((target) => takeModelDisabledSnapshot(apiBase, target));

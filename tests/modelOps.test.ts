@@ -55,6 +55,51 @@ describe('v2 model access planner', () => {
     expect(ops[0]).toMatchObject({ models: expect.arrayContaining(snapshot.entries.concat([{ name: 'other', alias: 'other' }])) });
   });
 
+  test('Gemini API Key model disable removes every alias and snapshots it', () => {
+    const ref = apiRef('gemini:0', 'gemini', 'gemma-4-31b-it');
+    const item = resource('gemini:0', 'gemini', {
+      models: [
+        { name: 'gemma-4-31b-it', alias: 'translate_tool' },
+        { name: 'gemma-4-31b-it', alias: 'gemma-4-31b-it' },
+        { name: 'other', alias: 'other' },
+      ],
+    });
+    const ops = planAccessToggle({ state: state({ resources: [item] }), ref, nextEnabled: false });
+
+    expect(kinds(ops)).toEqual(['modelDisabledPut', 'apiKeyModelsPut']);
+    expect(ops[0]).toMatchObject({
+      snapshot: {
+        entries: [
+          { name: 'gemma-4-31b-it', alias: 'translate_tool' },
+          { name: 'gemma-4-31b-it', alias: 'gemma-4-31b-it' },
+        ],
+      },
+    });
+    expect(ops[1]).toMatchObject({ models: [{ name: 'other', alias: 'other' }] });
+  });
+
+  test('Gemini API Key model re-enable restores every snapshotted alias', () => {
+    const ref = apiRef('gemini:0', 'gemini', 'gemma-4-31b-it');
+    const snapshot = {
+      target: ref,
+      entries: [
+        { name: 'gemma-4-31b-it', alias: 'translate_tool' },
+        { name: 'gemma-4-31b-it', alias: 'gemma-4-31b-it' },
+      ],
+    };
+    const ops = planAccessToggle({
+      state: state({
+        resources: [resource('gemini:0', 'gemini', { models: [{ name: 'other', alias: 'other' }] })],
+        modelDisabled: new Map([['apiKey:gemini:0:gemma-4-31b-it', snapshot]]),
+      }),
+      ref,
+      nextEnabled: true,
+    });
+
+    expect(kinds(ops)).toEqual(['apiKeyModelsPut', 'modelDisabledTake']);
+    expect(ops[0]).toMatchObject({ models: expect.arrayContaining(snapshot.entries) });
+  });
+
   test('same OAuth channel may keep multiple models under one alias', () => {
     const ops = planAliasSave({ state: state({ oauthAliasMap: { claude: [{ name: 'a', alias: 'old' }, { name: 'b', alias: 'old' }] } }), draft: { alias: 'chat', previousAliasKey: null, baselineAlias: '', isEditing: false, selectedTargets: [oauthRef('claude', 'a'), oauthRef('claude', 'b')], disabledTargets: [] } });
     const patch = ops.ops.find((op) => op.kind === 'oauthAliasPatch');
@@ -200,11 +245,11 @@ describe('v2 model access planner', () => {
     expect(ops.some((op) => op.kind === 'apiKeyModelsPut')).toBe(false);
   });
 
-  test('provider form planner only snapshots catalog-disabled sources', () => {
+  test('provider form planner snapshots all API Key sources', () => {
     const ref = apiRef('openai:0', 'openaiCompatibility', 'gpt-4o');
     const item = resource('openai:0', 'openaiCompatibility', { models: [{ name: 'gpt-4o', alias: 'chat' }] });
     expect(planProviderFormDeltas({ state: state({ resources: [item] }), resource: item, deltas: [{ ref, nextEnabled: false }] }).map((op) => op.kind)).toEqual(['modelDisabledPut']);
     const excludeItem = resource('gemini:0', 'gemini', { models: [{ name: 'a', alias: 'chat' }], excludedModels: [] });
-    expect(planProviderFormDeltas({ state: state({ resources: [excludeItem] }), resource: excludeItem, deltas: [{ ref: apiRef('gemini:0', 'gemini', 'a'), nextEnabled: false }] })).toEqual([]);
+    expect(planProviderFormDeltas({ state: state({ resources: [excludeItem] }), resource: excludeItem, deltas: [{ ref: apiRef('gemini:0', 'gemini', 'a'), nextEnabled: false }] }).map((op) => op.kind)).toEqual(['modelDisabledPut']);
   });
 });

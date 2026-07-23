@@ -1,6 +1,7 @@
 /**
  * Provider form helpers for per-model enable/disable.
- * exclude brands → excludedModels; openaiCompatibility → catalog suspend.
+ * API Key providers use catalog suspension: disabled model entries are omitted
+ * from models[] and retained in a local snapshot for restoration.
  */
 
 import { stripDisableAllModelsRule } from '@/components/providers/utils';
@@ -83,9 +84,9 @@ export type FormModelsLoadOptions = {
     thinking?: Record<string, unknown>;
   }>;
   includeOpenAIFields?: boolean;
-  /** Exact model ids currently excluded (exclude brands). */
+  /** Retained for callers that still pass server-side exclusion metadata. */
   exactExcludedIds?: Iterable<string>;
-  /** Catalog-suspended models to append as enabled=false (openaiCompatibility). */
+  /** Catalog-suspended models to append as enabled=false. */
   suspendedCatalog?: Array<{ modelId: string; entries: ModelAlias[] }>;
   /** Models omitted from backend models[] by manual mapping pruning. */
   catalogOnlyModelIds?: Iterable<string>;

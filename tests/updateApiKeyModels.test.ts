@@ -6,7 +6,7 @@ const resource = (brand: ProviderResource['brand'], raw: Record<string, unknown>
   ({ brand, raw } as unknown as ProviderResource);
 
 describe('API key model mapping writes', () => {
-  test('empty Claude mappings use an all-model exclusion instead of models: []', () => {
+  test('empty API Key mappings use an all-model exclusion instead of models: []', () => {
     const next = buildApiKeyModelsUpdate(
       resource('claude', {
         models: [{ name: 'glm-5.2', alias: 'claude-sonnet-4-6' }],
@@ -19,11 +19,11 @@ describe('API key model mapping writes', () => {
     expect(next.excludedModels).toEqual(['custom-*', '*']);
   });
 
-  test('other API key brands keep their existing empty-model behavior', () => {
+  test('empty Gemini mappings also block the provider catalog', () => {
     const next = buildApiKeyModelsUpdate(resource('gemini', {}), []);
 
     expect(next.models).toBeUndefined();
-    expect(next.excludedModels).toBeUndefined();
+    expect(next.excludedModels).toEqual(['*']);
   });
 
   test('managed Claude all-model exclusion is cleared when mappings return', () => {

@@ -13,7 +13,6 @@ import { useAuthStore } from '@/stores';
 import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import type { ModelInfo } from '@/utils/models';
 import {
-  collectExactExcludedIds,
   loadMappingDisabledCatalogModelIdsSafe,
   loadSuspendedCatalogSafe,
   modelsToFormEntriesWithAccess,
@@ -147,7 +146,7 @@ function buildInitialForm(
 
   const cfg = raw as GeminiKeyConfig & ProviderKeyConfig;
   const disabled = resource.disabled;
-  const exactExcludedIds = collectExactExcludedIds(cfg.excludedModels);
+  const suspendedCatalog = loadSuspendedCatalogSafe(apiBase, resource.id);
   const catalogOnlyModelIds = loadMappingDisabledCatalogModelIdsSafe(apiBase, resource.id);
   return {
     // Keep the API key blank in edit mode. Pre-filling the real key makes this
@@ -164,7 +163,7 @@ function buildInitialForm(
     priority: cfg.priority,
     models: modelsToFormEntriesWithAccess({
       models: cfg.models,
-      exactExcludedIds,
+      suspendedCatalog,
       catalogOnlyModelIds,
     }),
     headers: cfg.headers

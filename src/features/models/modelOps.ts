@@ -3,12 +3,10 @@
 import type { ModelAlias, OAuthModelAliasEntry } from '@/types';
 import type { ProviderBrand, ProviderResource } from '@/features/providers/types';
 import { normalizeProviderKey } from '@/features/authFiles/constants';
-import { stripDisableAllModelsRule } from '@/components/providers/utils';
 import {
   normalizeOAuthExcludedRules,
   updateOAuthExcludedRule,
 } from '@/features/authFiles/oauthExcludedRules';
-import { toggleApiKeyExcludedList } from './modelAccessRows';
 import {
   accessEnabledKey,
   mappingTargetKey,
@@ -113,12 +111,6 @@ function readApiKeyModels(resource: ProviderResource): ModelAlias[] {
       return { ...entry, name, alias: String(entry?.alias ?? name).trim() || name };
     })
     .filter((entry): entry is ModelAlias => Boolean(entry));
-}
-
-function supportsExcludedModels(resource: ProviderResource): boolean {
-  // Capability is a provider contract, not whether the optional field happened
-  // to be present in the last response.
-  return resource.brand !== 'openaiCompatibility';
 }
 
 function stripTarget(target: MappingTargetRef): MappingTargetRef {
@@ -389,23 +381,6 @@ export function planAccessToggle(input: PlanAccessToggleInput): ModelOp[] {
   }
   const resource = state.catalogs.resources.find((item) => item.id === ref.resourceId);
   if (!resource) return ops;
-  if (supportsExcludedModels(resource)) {
-    const raw = resource.raw as { excludedModels?: string[] };
-    const current = stripDisableAllModelsRule(Array.isArray(raw.excludedModels) ? raw.excludedModels : []);
-    const next = toggleApiKeyExcludedList(current, ref.modelId, !nextEnabled);
-    if (JSON.stringify(current) !== JSON.stringify(next)) {
-      ops.push({
-        kind: 'apiKeyExcludedPatch',
-        phase: 'backend',
-        queueKey,
-        resourceId: resource.id,
-        brand: resource.brand,
-        modelsWithoutStar: next,
-      });
-    }
-    return ops;
-  }
-
   const models = readApiKeyModels(resource);
   if (!nextEnabled) {
     const removed = modelEntriesForTarget(models, ref.modelId);
@@ -545,17 +520,7 @@ function planAliasBackendForSource(
 
     const resourceId = sourceKey.slice('apiKey:'.length);
     const resource = state.catalogs.resources.find((item) => item.id === resourceId);
-    if (!resource || !supportsExcludedModels(resource)) {
-      // A catalog-disabled model has no backend entry; its snapshot is handled below.
-      if (!resource) return;
-      let models = readApiKeyModels(resource);
-      models = upsertApiKeyBindings(models, finalAlias, selectedBySource.get(sourceKey) ?? [], disabledKeys);
-      models = normalizeApiKeyIdentityEntries(models, resource, explicitIdentityKeys, disabledKeys);
-      if (JSON.stringify(models) !== JSON.stringify(readApiKeyModels(resource))) {
-        out.push({ kind: 'apiKeyModelsPut', phase: 'backend', queueKey: resourceId, resourceId, brand: resource.brand, models });
-      }
-      return;
-    }
+    if (!resource) return;
     let models = readApiKeyModels(resource);
     models = upsertApiKeyBindings(models, finalAlias, selectedBySource.get(sourceKey) ?? [], disabledKeys);
     models = normalizeApiKeyIdentityEntries(models, resource, explicitIdentityKeys, disabledKeys);
@@ -688,7 +653,6 @@ export function planProviderFormDeltas(input: {
   deltas: ProviderFormDelta[];
 }): ModelOp[] {
   const ops: ModelOp[] = [];
-  if (supportsExcludedModels(input.resource)) return ops;
   for (const delta of input.deltas) {
     if (delta.ref.source !== 'apiKey' || delta.ref.resourceId !== input.resource.id) continue;
     const targetKey = accessEnabledKey(delta.ref);

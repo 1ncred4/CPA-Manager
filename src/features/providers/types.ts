@@ -116,7 +116,7 @@ export interface ModelEntryInput {
   thinkingJson?: string;
   /**
    * Per-model enable state in the provider form (default true).
-   * Saved as excludedModels (most brands) or models[] catalog suspend (openaiCompatibility).
+   * Saved as models[] catalog suspension for all API Key brands.
    */
   enabled?: boolean;
   /** UI-only hint for a model omitted from backend models[] by mapping pruning. */
